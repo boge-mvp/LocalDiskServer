@@ -34,12 +34,17 @@ if (-not (Test-Path $targetDir)) {
     Write-Host "   - 目标目录已存在。" -ForegroundColor Gray
 }
 
-# 3. 复制运行文件及运维工具
-Write-Host "[3/3] 正在复制文件至便携目录..." -ForegroundColor Green
-Copy-Item -Path $distExe -Destination (Join-Path $targetDir "LocalDiskServer.exe") -Force
-if (Test-Path $repairScript) {
-    Copy-Item -Path $repairScript -Destination (Join-Path $targetDir "run_repair.ps1") -Force
+# 3. 检查是否有正在运行的实例，若有则平滑终止
+$runningProcesses = Get-Process -Name "LocalDiskServer" -ErrorAction SilentlyContinue
+if ($runningProcesses) {
+    Write-Host "[3/4] 检测到正在运行的 LocalDiskServer 实例，正在安全关闭..." -ForegroundColor Yellow
+    $runningProcesses | Stop-Process -Force
+    Start-Sleep -Milliseconds 600
 }
+
+# 4. 复制运行文件及运维工具
+Write-Host "[4/4] 正在复制文件至便携目录..." -ForegroundColor Green
+Copy-Item -Path $distExe -Destination (Join-Path $targetDir "LocalDiskServer.exe") -Force
 
 $deployedExe = Join-Path $targetDir "LocalDiskServer.exe"
 if (Test-Path $deployedExe) {

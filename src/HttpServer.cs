@@ -84,29 +84,29 @@ namespace LocalDiskServer
                     catch (Exception ex)
                     {
                         Logger.Log("HTTPS 安全沙箱启动失败: " + ex.Message);
-                        MessageBox.Show("HTTPS 安全沙箱启动失败: " + ex.Message + "\n请确保以管理员权限运行并正确绑定证书。", "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        MessageBox.Show(I18nManager.T("dialog_https_start_fail", ex.Message), I18nManager.T("dialog_warning"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     }
                 }
 
                 // 3. 更新托盘状态菜单文本
-                string statusText = string.Format("运行中: http://localhost:{0}", port);
+                string statusText = string.Format("http://localhost:{0}", port);
                 if (httpsStarted)
                 {
                     statusText += string.Format(" & https://localhost:{0}", httpsPort);
                 }
-                ServerApplicationContext.statusMenuItem.Text = statusText;
+                ServerApplicationContext.statusMenuItem.Text = I18nManager.T("menu_status_running", statusText);
 
-                string balloonMsg = string.Format("HTTP 端口: {0}\n双击托盘图标打开主页", port);
+                string balloonMsg = I18nManager.T("tray_balloon_content", port);
                 if (httpsStarted)
                 {
-                    balloonMsg = string.Format("HTTP 端口: {0} | HTTPS 端口: {1}\n双击托盘图标打开主页", port, httpsPort);
+                    balloonMsg = string.Format("HTTP: {0} | HTTPS: {1}\n" + I18nManager.T("tray_balloon_content", port).Replace(string.Format("HTTP 端口: {0}\n", port), "").Replace(string.Format("HTTP Port: {0}\n", port), ""), port, httpsPort);
                 }
-                ServerApplicationContext.trayIcon.ShowBalloonTip(3000, "本地服务器已启动", balloonMsg, ToolTipIcon.Info);
+                ServerApplicationContext.trayIcon.ShowBalloonTip(3000, I18nManager.T("tray_balloon_title"), balloonMsg, ToolTipIcon.Info);
             }
             catch (Exception ex)
             {
-                ServerApplicationContext.statusMenuItem.Text = "启动失败";
-                MessageBox.Show("启动本地服务器失败: " + ex.Message, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                ServerApplicationContext.statusMenuItem.Text = I18nManager.T("menu_status_stopped");
+                MessageBox.Show(I18nManager.T("dialog_error") + ": " + ex.Message, I18nManager.T("dialog_error"), MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 

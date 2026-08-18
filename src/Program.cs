@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Diagnostics;
 using Microsoft.Win32;
 using System.Text;
+using System.Collections.Generic;
 
 namespace LocalDiskServer
 {
@@ -38,22 +39,27 @@ namespace LocalDiskServer
 
     public class ServerApplicationContext : ApplicationContext
     {
-        public static readonly System.Collections.Generic.List<ShellInfo> availableShells = new System.Collections.Generic.List<ShellInfo>();
+        public static readonly List<ShellInfo> availableShells = new List<ShellInfo>();
         
         public static NotifyIcon trayIcon;
         public static MenuItem statusMenuItem;
+        public static MenuItem openHomeMenuItem;
+        public static MenuItem viewLogsMenuItem;
+        public static MenuItem configTextExtMenuItem;
+        public static MenuItem plainPortMenuItem;
+        public static MenuItem sslPortMenuItem;
+        public static MenuItem httpsToggleMenuItem;
+        public static MenuItem languageSubMenu;
         public static MenuItem startupMenuItem;
+        public static MenuItem exitMenuItem;
 
-        // 新增的持久化控制与证书状态变量
+        // 持久化控制与证书状态变量
         public static int port = 1234;
         public static int https_port = 1235;
         public static bool use_https = false;
         public static string ssl_hash = "";
         public static int last_bound_https_port = 1235;
-
-        public static MenuItem plainPortMenuItem;
-        public static MenuItem sslPortMenuItem;
-        public static MenuItem httpsToggleMenuItem;
+        public static string language = "";
 
         public static string configFile = "server_config.ini";
         public static string textExtensionsStr = "txt,md,log,ini,conf,cfg,json,js,css,html,htm,xml,bat,sh,py,java,cs,go,rs,cpp,h,c,properties,yaml,yml,sql,ts";
@@ -73,12 +79,17 @@ namespace LocalDiskServer
         {
             DetectAvailableShells();
             LoadConfig();
+            
+            // 初始化多语言体系并订阅语言变更通知
+            I18nManager.Initialize(language);
+            I18nManager.LanguageChanged += OnLanguageChanged;
+
             InitTrayIcon();
 
-            // Start standard multi-threaded HTTP server
+            // 启动标准多线程 HTTP 服务器
             HttpServer.StartServer();
 
-            // Start background thread for Gradle caching dependencies & wrappers scan
+            // 启动后台线程异步扫描 Gradle 缓存与 Wrapper
             GradleExplorer.TriggerGradleScanAsync();
         }
 
@@ -205,8 +216,12 @@ namespace LocalDiskServer
                         {
                             favoritesStr = line.Substring(10).Trim();
                         }
+                        else if (line.StartsWith("language=", StringComparison.OrdinalIgnoreCase))
+                        {
+                            language = line.Substring(9).Trim();
+                        }
                     }
-                    Log(string.Format("加载配置文件成功。端口: {0}, HTTPS端口: {1}, 启用HTTPS: {2}, 文本后缀: {3} 个", port, https_port, use_https, textExtensionsStr.Split(',').Length));
+                    Log(string.Format("加载配置文件成功。端口: {0}, HTTPS端口: {1}, 语言: {2}", port, https_port, string.IsNullOrEmpty(language) ? "自动匹配" : language));
                 }
                 else
                 {
@@ -215,7 +230,7 @@ namespace LocalDiskServer
             }
             catch (Exception ex)
             {
-                MessageBox.Show("加载配置文件失败: " + ex.Message, "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(I18nManager.T("dialog_load_config_fail", ex.Message), I18nManager.T("dialog_warning"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -238,12 +253,13 @@ namespace LocalDiskServer
                 sb.AppendLine("last_bound_https_port=" + last_bound_https_port);
                 sb.AppendLine("text_extensions=" + textExtensionsStr);
                 sb.AppendLine("favorites=" + favoritesStr);
+                sb.AppendLine("language=" + (language ?? ""));
                 File.WriteAllText(configPath, sb.ToString());
                 Log("保存配置文件成功");
             }
             catch (Exception ex)
             {
-                MessageBox.Show("保存配置文件失败: " + ex.Message, "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("保存配置文件失败: " + ex.Message, I18nManager.T("dialog_warning"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -251,32 +267,41 @@ namespace LocalDiskServer
         {
             ContextMenu trayMenu = new ContextMenu();
 
-            statusMenuItem = new MenuItem("服务器未启动");
+            statusMenuItem = new MenuItem(I18nManager.T("menu_status_stopped"));
             statusMenuItem.Enabled = false;
             trayMenu.MenuItems.Add(statusMenuItem);
 
             trayMenu.MenuItems.Add(new MenuItem("-"));
 
-            trayMenu.MenuItems.Add(new MenuItem("打开主页", OpenBrowser));
-            trayMenu.MenuItems.Add(new MenuItem("查看系统日志", OpenLogs));
-            trayMenu.MenuItems.Add(new MenuItem("配置可读后缀", ChangeTextExtensions));
+            openHomeMenuItem = new MenuItem(I18nManager.T("menu_open_home"), OpenBrowser);
+            viewLogsMenuItem = new MenuItem(I18nManager.T("menu_view_logs"), OpenLogs);
+            configTextExtMenuItem = new MenuItem(I18nManager.T("menu_config_text_ext"), ChangeTextExtensions);
 
-            // 重构菜单，集成明文、密文端口配置及双通道切换
-            plainPortMenuItem = new MenuItem("配置明文端口 (当前: " + port + ")", ChangePort);
-            sslPortMenuItem = new MenuItem("配置密文端口 (当前: " + https_port + ")", ChangeHttpsPort);
-            httpsToggleMenuItem = new MenuItem("启用 HTTPS 双通道", ToggleHttps);
+            trayMenu.MenuItems.Add(openHomeMenuItem);
+            trayMenu.MenuItems.Add(viewLogsMenuItem);
+            trayMenu.MenuItems.Add(configTextExtMenuItem);
+
+            plainPortMenuItem = new MenuItem(I18nManager.T("menu_config_plain_port", port), ChangePort);
+            sslPortMenuItem = new MenuItem(I18nManager.T("menu_config_ssl_port", https_port), ChangeHttpsPort);
+            httpsToggleMenuItem = new MenuItem(I18nManager.T("menu_toggle_https"), ToggleHttps);
             httpsToggleMenuItem.Checked = use_https;
             
             trayMenu.MenuItems.Add(plainPortMenuItem);
             trayMenu.MenuItems.Add(sslPortMenuItem);
             trayMenu.MenuItems.Add(httpsToggleMenuItem);
 
-            startupMenuItem = new MenuItem("开机自启动", ToggleStartup);
+            // 动态构建多语言二级子菜单
+            languageSubMenu = new MenuItem(I18nManager.T("menu_language"));
+            BuildLanguageSubMenu();
+            trayMenu.MenuItems.Add(languageSubMenu);
+
+            startupMenuItem = new MenuItem(I18nManager.T("menu_startup"), ToggleStartup);
             startupMenuItem.Checked = IsStartupEnabled();
             trayMenu.MenuItems.Add(startupMenuItem);
 
             trayMenu.MenuItems.Add(new MenuItem("-"));
-            trayMenu.MenuItems.Add(new MenuItem("退出", Exit));
+            exitMenuItem = new MenuItem(I18nManager.T("menu_exit"), Exit);
+            trayMenu.MenuItems.Add(exitMenuItem);
 
             Icon appIcon = null;
             try
@@ -303,18 +328,95 @@ namespace LocalDiskServer
             {
                 Icon = appIcon,
                 ContextMenu = trayMenu,
-                Text = "本地超轻量磁盘服务器",
+                Text = I18nManager.T("tray_tooltip"),
                 Visible = true
             };
 
             trayIcon.DoubleClick += OpenBrowser;
         }
 
+        private static void BuildLanguageSubMenu()
+        {
+            if (languageSubMenu == null) return;
+            languageSubMenu.MenuItems.Clear();
+
+            List<LanguageInfo> languages = I18nManager.GetAvailableLanguages();
+            string currentCode = I18nManager.CurrentLanguageCode;
+
+            foreach (LanguageInfo lang in languages)
+            {
+                string targetCode = lang.Code;
+                MenuItem langItem = new MenuItem(lang.Name, (s, e) =>
+                {
+                    SetLanguage(targetCode);
+                });
+
+                if (string.Equals(targetCode, currentCode, StringComparison.OrdinalIgnoreCase))
+                {
+                    langItem.Checked = true;
+                }
+
+                languageSubMenu.MenuItems.Add(langItem);
+            }
+        }
+
+        public static void SetLanguage(string langCode)
+        {
+            if (I18nManager.LoadLanguage(langCode))
+            {
+                language = langCode;
+                SaveConfigStatic();
+                UpdateMenuTexts();
+            }
+        }
+
+        private static void OnLanguageChanged()
+        {
+            UpdateMenuTexts();
+        }
+
         public static void UpdateMenuTexts()
         {
-            if (plainPortMenuItem != null) plainPortMenuItem.Text = "配置明文端口 (当前: " + port + ")";
-            if (sslPortMenuItem != null) sslPortMenuItem.Text = "配置密文端口 (当前: " + https_port + ")";
-            if (httpsToggleMenuItem != null) httpsToggleMenuItem.Checked = use_https;
+            if (openHomeMenuItem != null) openHomeMenuItem.Text = I18nManager.T("menu_open_home");
+            if (viewLogsMenuItem != null) viewLogsMenuItem.Text = I18nManager.T("menu_view_logs");
+            if (configTextExtMenuItem != null) configTextExtMenuItem.Text = I18nManager.T("menu_config_text_ext");
+            if (plainPortMenuItem != null) plainPortMenuItem.Text = I18nManager.T("menu_config_plain_port", port);
+            if (sslPortMenuItem != null) sslPortMenuItem.Text = I18nManager.T("menu_config_ssl_port", https_port);
+            if (httpsToggleMenuItem != null)
+            {
+                httpsToggleMenuItem.Text = I18nManager.T("menu_toggle_https");
+                httpsToggleMenuItem.Checked = use_https;
+            }
+            if (languageSubMenu != null)
+            {
+                languageSubMenu.Text = I18nManager.T("menu_language");
+                BuildLanguageSubMenu();
+            }
+            if (startupMenuItem != null) startupMenuItem.Text = I18nManager.T("menu_startup");
+            if (exitMenuItem != null) exitMenuItem.Text = I18nManager.T("menu_exit");
+
+            if (trayIcon != null)
+            {
+                trayIcon.Text = I18nManager.T("tray_tooltip");
+            }
+
+            // 更新服务运行状态菜单项
+            if (statusMenuItem != null)
+            {
+                if (HttpServer.listener != null && HttpServer.listener.IsListening)
+                {
+                    string status = string.Format("http://localhost:{0}", port);
+                    if (use_https && HttpServer.httpsListener != null && HttpServer.httpsListener.IsListening)
+                    {
+                        status += string.Format(" & https://localhost:{0}", https_port);
+                    }
+                    statusMenuItem.Text = I18nManager.T("menu_status_running", status);
+                }
+                else
+                {
+                    statusMenuItem.Text = I18nManager.T("menu_status_stopped");
+                }
+            }
         }
 
         private void OpenLogs(object sender, EventArgs e)
@@ -326,7 +428,7 @@ namespace LocalDiskServer
             }
             catch (Exception ex)
             {
-                MessageBox.Show("无法打开日志地址: " + ex.Message, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(I18nManager.T("dialog_open_logs_fail", ex.Message), I18nManager.T("dialog_error"), MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -339,13 +441,13 @@ namespace LocalDiskServer
             }
             catch (Exception ex)
             {
-                MessageBox.Show("无法打开浏览器: " + ex.Message, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(I18nManager.T("dialog_open_browser_fail", ex.Message), I18nManager.T("dialog_error"), MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
         private void ChangePort(object sender, EventArgs e)
         {
-            string input = ShowInputDialog("修改服务端口", "请输入新的服务端口 (1-65535):", port.ToString());
+            string input = ShowInputDialog(I18nManager.T("dialog_port_title"), I18nManager.T("dialog_port_prompt"), port.ToString());
             if (string.IsNullOrEmpty(input)) return;
             int newPort;
             if (int.TryParse(input, out newPort) && newPort >= 1 && newPort <= 65535)
@@ -361,13 +463,13 @@ namespace LocalDiskServer
             }
             else
             {
-                MessageBox.Show("无效的端口，请输入 1 到 65535 之间的数字。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(I18nManager.T("dialog_port_invalid"), I18nManager.T("dialog_tip"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
         private void ChangeHttpsPort(object sender, EventArgs e)
         {
-            string input = ShowInputDialog("修改 HTTPS 服务端口", "请输入新的 HTTPS 端口 (1-65535):", https_port.ToString());
+            string input = ShowInputDialog(I18nManager.T("dialog_https_port_title"), I18nManager.T("dialog_https_port_prompt"), https_port.ToString());
             if (string.IsNullOrEmpty(input)) return;
             int newPort;
             if (int.TryParse(input, out newPort) && newPort >= 1 && newPort <= 65535)
@@ -391,7 +493,7 @@ namespace LocalDiskServer
             }
             else
             {
-                MessageBox.Show("无效的端口，请输入 1 到 65535 之间的数字。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(I18nManager.T("dialog_port_invalid"), I18nManager.T("dialog_tip"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -421,7 +523,7 @@ namespace LocalDiskServer
 
         private void ChangeTextExtensions(object sender, EventArgs e)
         {
-            string input = ShowInputDialog("配置可读文本后缀", "请输入以逗号分隔的文本文件后缀列表:", textExtensionsStr, true);
+            string input = ShowInputDialog(I18nManager.T("dialog_text_ext_title"), I18nManager.T("dialog_text_ext_prompt"), textExtensionsStr, true);
             if (input == null) return;
             textExtensionsStr = input.Trim();
             SaveConfig();
@@ -474,7 +576,7 @@ namespace LocalDiskServer
             }
             catch (Exception ex)
             {
-                MessageBox.Show("设置开机启动失败: " + ex.Message, "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(I18nManager.T("dialog_startup_fail", ex.Message), I18nManager.T("dialog_tip"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
         }
@@ -507,8 +609,8 @@ namespace LocalDiskServer
             label.Text = promptText;
             textBox.Text = defaultValue;
 
-            buttonOk.Text = "确定";
-            buttonCancel.Text = "取消";
+            buttonOk.Text = I18nManager.T("dialog_ok");
+            buttonCancel.Text = I18nManager.T("dialog_cancel");
             buttonOk.DialogResult = DialogResult.OK;
             buttonCancel.DialogResult = DialogResult.Cancel;
 

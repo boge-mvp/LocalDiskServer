@@ -41,9 +41,18 @@ if (-not $cscPath) {
 
 Write-Host "[1/4] 编译器定位成功: $cscPath" -ForegroundColor Green
 
-# 2. 确保输出目录存在
+# 2. 确保输出目录存在与文件未被占用
 if (-not (Test-Path $distDir)) {
     New-Item -ItemType Directory -Path $distDir -Force | Out-Null
+} else {
+    $runningDev = Get-Process -Name "LocalDiskServer" -ErrorAction SilentlyContinue | Where-Object {
+        $_.Path -eq $outputExe
+    }
+    if ($runningDev) {
+        Write-Host "[!] 检测到 dist/ 下运行中的 LocalDiskServer，正在安全终止..." -ForegroundColor Yellow
+        $runningDev | Stop-Process -Force
+        Start-Sleep -Milliseconds 600
+    }
 }
 
 # 3. 收集 C# 源代码
@@ -56,13 +65,13 @@ Write-Host "[2/4] 收集源代码文件 ($($csFiles.Count) 个):" -ForegroundCol
 $csFiles | ForEach-Object { Write-Host "   - $(Split-Path $_ -Leaf)" -ForegroundColor Gray }
 
 # 4. 收集并组装静态资源 (打包为程序集内嵌资源)
-$resFiles = Get-ChildItem -Path $resDir -File
+$resFiles = Get-ChildItem -Path $resDir -File -Recurse
 $resourceArgs = @()
-Write-Host "[3/4] 准备内嵌前端资源 ($($resFiles.Count) 个):" -ForegroundColor Green
+Write-Host "[3/4] 准备内嵌前端与多语言资源 ($($resFiles.Count) 个):" -ForegroundColor Green
 foreach ($res in $resFiles) {
-    $identifier = $res.Name
-    $resourceArgs += "/resource:`"$($res.FullName)`",$identifier"
-    Write-Host "   - $identifier" -ForegroundColor Gray
+    $relativePath = $res.FullName.Substring($resDir.Length).TrimStart('\', '/').Replace('\', '/')
+    $resourceArgs += "/resource:`"$($res.FullName)`",$relativePath"
+    Write-Host "   - $relativePath" -ForegroundColor Gray
 }
 
 # 5. 组装编译参数

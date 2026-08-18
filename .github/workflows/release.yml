@@ -1,0 +1,42 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    name: Build & Publish Release Binary
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Compile Single-Binary LocalDiskServer
+        shell: pwsh
+        run: |
+          ./scripts/build.ps1
+
+      - name: Verify Build Artifact
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/LocalDiskServer.exe")) {
+            Write-Error "Build failed: dist/LocalDiskServer.exe was not created."
+            exit 1
+          }
+          $item = Get-Item "dist/LocalDiskServer.exe"
+          Write-Host "Artifact generated successfully: $($item.FullName) ($([Math]::Round($item.Length / 1KB, 2)) KB)"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/LocalDiskServer.exe
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
