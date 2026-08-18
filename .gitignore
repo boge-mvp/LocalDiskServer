@@ -1,0 +1,22 @@
+# 构建产物与发布目录
+dist/
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+
+# 运行时生成文件与配置
+*.ini
+*.log
+crash.txt
+crash_report_*.txt
+
+# IDE / 编辑器临时文件
+.vs/
+.idea/
+*.user
+*.suo
+
+# 临时测试 / 工作区
+scratch/

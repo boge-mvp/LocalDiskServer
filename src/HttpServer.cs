@@ -1,0 +1,804 @@
+using System;
+using System.IO;
+using System.Net;
+using System.Text;
+using System.Threading;
+using System.Windows.Forms;
+
+namespace LocalDiskServer
+{
+    public static class HttpServer
+    {
+        public static HttpListener listener;
+        public static HttpListener httpsListener;
+        public static Thread serverThread;
+        public static Thread httpsServerThread;
+        public static readonly string versionHash = DateTime.Now.Ticks.ToString("x");
+
+        public static void StartServer()
+        {
+            try
+            {
+                StopServer();
+
+                int port = ServerApplicationContext.port;
+                int httpsPort = ServerApplicationContext.https_port;
+                bool useHttps = ServerApplicationContext.use_https;
+
+                // 1. 初始化 HTTP Listener
+                listener = new HttpListener();
+                try
+                {
+                    listener.Prefixes.Add(string.Format("http://localhost:{0}/", port));
+                }
+                catch { }
+
+                try
+                {
+                    listener.Prefixes.Add(string.Format("http://127.0.0.1:{0}/", port));
+                }
+                catch { }
+
+                if (listener.Prefixes.Count == 0)
+                {
+                    throw new Exception("无法绑定到任何 HTTP 监听前缀，请检查端口是否被占用或是否有权限。");
+                }
+
+                listener.Start();
+                Logger.Log("HTTP 极速通道启动成功，端口: " + port);
+
+                serverThread = new Thread(ServerLoop);
+                serverThread.IsBackground = true;
+                serverThread.Start();
+
+                // 2. 初始化 HTTPS Listener (仅在 useHttps 为 true 时)
+                bool httpsStarted = false;
+                if (useHttps)
+                {
+                    try
+                    {
+                        httpsListener = new HttpListener();
+                        try
+                        {
+                            httpsListener.Prefixes.Add(string.Format("https://localhost:{0}/", httpsPort));
+                        }
+                        catch { }
+
+                        try
+                        {
+                            httpsListener.Prefixes.Add(string.Format("https://127.0.0.1:{0}/", httpsPort));
+                        }
+                        catch { }
+
+                        if (httpsListener.Prefixes.Count > 0)
+                        {
+                            httpsListener.Start();
+                            Logger.Log("HTTPS 安全沙箱启动成功，端口: " + httpsPort);
+
+                            httpsServerThread = new Thread(HttpsServerLoop);
+                            httpsServerThread.IsBackground = true;
+                            httpsServerThread.Start();
+                            httpsStarted = true;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log("HTTPS 安全沙箱启动失败: " + ex.Message);
+                        MessageBox.Show("HTTPS 安全沙箱启动失败: " + ex.Message + "\n请确保以管理员权限运行并正确绑定证书。", "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                }
+
+                // 3. 更新托盘状态菜单文本
+                string statusText = string.Format("运行中: http://localhost:{0}", port);
+                if (httpsStarted)
+                {
+                    statusText += string.Format(" & https://localhost:{0}", httpsPort);
+                }
+                ServerApplicationContext.statusMenuItem.Text = statusText;
+
+                string balloonMsg = string.Format("HTTP 端口: {0}\n双击托盘图标打开主页", port);
+                if (httpsStarted)
+                {
+                    balloonMsg = string.Format("HTTP 端口: {0} | HTTPS 端口: {1}\n双击托盘图标打开主页", port, httpsPort);
+                }
+                ServerApplicationContext.trayIcon.ShowBalloonTip(3000, "本地服务器已启动", balloonMsg, ToolTipIcon.Info);
+            }
+            catch (Exception ex)
+            {
+                ServerApplicationContext.statusMenuItem.Text = "启动失败";
+                MessageBox.Show("启动本地服务器失败: " + ex.Message, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        public static void StopServer()
+        {
+            if (listener != null)
+            {
+                try
+                {
+                    listener.Stop();
+                    listener.Close();
+                }
+                catch { }
+                listener = null;
+            }
+
+            if (serverThread != null)
+            {
+                try
+                {
+                    serverThread.Abort();
+                }
+                catch { }
+                serverThread = null;
+            }
+
+            if (httpsListener != null)
+            {
+                try
+                {
+                    httpsListener.Stop();
+                    httpsListener.Close();
+                }
+                catch { }
+                httpsListener = null;
+            }
+
+            if (httpsServerThread != null)
+            {
+                try
+                {
+                    httpsServerThread.Abort();
+                }
+                catch { }
+                httpsServerThread = null;
+            }
+        }
+
+        private static void ServerLoop()
+        {
+            while (listener != null && listener.IsListening)
+            {
+                try
+                {
+                    HttpListenerContext context = listener.GetContext();
+                    ThreadPool.QueueUserWorkItem(delegate {
+                        ProcessRequest(context);
+                    });
+                }
+                catch { }
+            }
+        }
+
+        private static void HttpsServerLoop()
+        {
+            while (httpsListener != null && httpsListener.IsListening)
+            {
+                try
+                {
+                    HttpListenerContext context = httpsListener.GetContext();
+                    ThreadPool.QueueUserWorkItem(delegate {
+                        ProcessRequest(context);
+                    });
+                }
+                catch { }
+            }
+        }
+
+        private static void ProcessRequest(HttpListenerContext context)
+        {
+            HttpListenerRequest request = context.Request;
+            HttpListenerResponse response = context.Response;
+
+            try
+            {
+                string rawPath = Uri.UnescapeDataString(request.Url.LocalPath).Trim('/');
+                if (!rawPath.Equals("api/logs", StringComparison.OrdinalIgnoreCase))
+                {
+                    Logger.Log(string.Format("收到请求 {0} {1} 来自 {2}", request.HttpMethod, request.RawUrl, request.RemoteEndPoint));
+                }
+                
+                if (rawPath.Equals("favicon.ico", StringComparison.OrdinalIgnoreCase))
+                {
+                    response.StatusCode = 404;
+                    response.Close();
+                    return;
+                }
+
+                if (rawPath.Equals("style.css", StringComparison.OrdinalIgnoreCase))
+                {
+                    ServeStaticResource(response, "style.css", "text/css; charset=utf-8");
+                    return;
+                }
+
+                if (rawPath.Equals("app.js", StringComparison.OrdinalIgnoreCase))
+                {
+                    ServeStaticResource(response, "app.js", "application/javascript; charset=utf-8");
+                    return;
+                }
+
+                if (rawPath.StartsWith("api/", StringComparison.OrdinalIgnoreCase))
+                {
+                    HandleApiRequest(rawPath, request, response);
+                    return;
+                }
+
+                if (string.IsNullOrEmpty(rawPath))
+                {
+                    string view = request.QueryString["view"];
+                    if ("gradle".Equals(view, StringComparison.OrdinalIgnoreCase))
+                    {
+                        GradleExplorer.ServeGradleDashboard(response);
+                    }
+                    else
+                    {
+                        ServeDriveList(response);
+                    }
+                    return;
+                }
+
+                string[] parts = rawPath.Split('/');
+                string driveLetter = parts[0];
+
+                if (driveLetter.Length == 1 && char.IsLetter(driveLetter[0]))
+                {
+                    string physicalPath = driveLetter.ToUpper() + ":\\";
+                    if (parts.Length > 1)
+                    {
+                        string subPath = string.Join(Path.DirectorySeparatorChar.ToString(), parts, 1, parts.Length - 1);
+                        physicalPath = Path.Combine(physicalPath, subPath);
+                    }
+
+                    if (Directory.Exists(physicalPath))
+                    {
+                        FileExplorer.ServeDirectory(response, physicalPath, rawPath);
+                    }
+                    else if (File.Exists(physicalPath))
+                    {
+                        bool isRaw = request.QueryString["raw"] == "1";
+                        bool forceText = request.QueryString["force_text"] == "1";
+                        FileExplorer.ServeFile(response, physicalPath, isRaw, forceText);
+                    }
+                    else
+                    {
+                        ServeError(response, 404, "路径不存在: " + physicalPath);
+                    }
+                }
+                else
+                {
+                    ServeError(response, 400, "无效的盘符路径");
+                }
+            }
+            catch (Exception ex)
+            {
+                ServeError(response, 500, "内部服务器错误: " + ex.Message);
+            }
+        }
+
+        private static void HandleApiRequest(string rawPath, HttpListenerRequest request, HttpListenerResponse response)
+        {
+            if (request.HttpMethod == "OPTIONS")
+            {
+                response.StatusCode = 200;
+                response.Headers.Add("Access-Control-Allow-Origin", "*");
+                response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                response.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
+                response.Close();
+                return;
+            }
+
+            try
+            {
+                if (Logger.HandleApi(rawPath, request, response)) return;
+                if (GradleExplorer.HandleApi(rawPath, request, response)) return;
+                if (FileExplorer.HandleApi(rawPath, request, response)) return;
+
+                ServeError(response, 404, "接口未找到: " + rawPath);
+            }
+            catch (Exception ex)
+            {
+                ServeJson(response, 500, "{\"success\":false,\"message\":\"" + EscapeJson(ex.Message) + "\"}");
+            }
+        }
+
+        public static void ServeJson(HttpListenerResponse response, int statusCode, string json)
+        {
+            try
+            {
+                byte[] buffer = Encoding.UTF8.GetBytes(json);
+                response.StatusCode = statusCode;
+                response.ContentType = "application/json; charset=utf-8";
+                response.ContentLength64 = buffer.Length;
+                response.Headers.Add("Access-Control-Allow-Origin", "*");
+                response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                response.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
+                response.OutputStream.Write(buffer, 0, buffer.Length);
+                response.Close();
+            }
+            catch { }
+        }
+
+        public static void ServeError(HttpListenerResponse response, int statusCode, string message)
+        {
+            try
+            {
+                response.StatusCode = statusCode;
+                StringBuilder sb = new StringBuilder();
+                sb.Append(GetHtmlHeader("错误 - " + statusCode, ""));
+                sb.AppendFormat("<div style='text-align:center; padding: 50px 20px;'>" +
+                                "  <h1 style='font-size: 4rem; color: #e74c3c; margin: 0;'>{0}</h1>" +
+                                "  <p style='font-size: 1.2rem; color: #7f8c8d;'>{1}</p>" +
+                                "  <a href='/' style='display:inline-block; margin-top:20px; padding:10px 20px; background:#3498db; color:white; border-radius:4px; text-decoration:none;'>返回首页</a>" +
+                                "</div>", statusCode, WebUtility.HtmlEncode(message));
+                sb.Append(GetHtmlFooter());
+
+                byte[] buffer = Encoding.UTF8.GetBytes(sb.ToString());
+                response.ContentType = "text/html; charset=utf-8";
+                response.ContentLength64 = buffer.Length;
+                response.OutputStream.Write(buffer, 0, buffer.Length);
+            }
+            catch { }
+            finally
+            {
+                try { response.OutputStream.Close(); } catch { }
+            }
+        }
+
+        private static void ServeStaticResource(HttpListenerResponse response, string resourceName, string contentType)
+        {
+            try
+            {
+                string content = LoadResource(resourceName);
+                byte[] buffer = Encoding.UTF8.GetBytes(content);
+                response.StatusCode = 200;
+                response.ContentType = contentType;
+                response.ContentLength64 = buffer.Length;
+                response.Headers.Add("Cache-Control", "public, max-age=3600");
+                response.OutputStream.Write(buffer, 0, buffer.Length);
+                response.OutputStream.Close();
+            }
+            catch
+            {
+                response.StatusCode = 500;
+                response.Close();
+            }
+        }
+
+        public static string LoadResource(string name)
+        {
+            using (var stream = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream(name))
+            {
+                if (stream == null) return "";
+                using (var reader = new System.IO.StreamReader(stream))
+                {
+                    return reader.ReadToEnd();
+                }
+            }
+        }
+
+        public static string GetHtmlHeader(string title, string pathInfo, string bodyClass = "")
+        {
+            string html = LoadResource("header.html");
+            if (string.IsNullOrEmpty(html)) return "";
+            html = html.Replace("{TITLE}", WebUtility.HtmlEncode(title));
+            html = html.Replace("{BODY_CLASS}", bodyClass);
+            html = html.Replace("{HTTP_PORT}", ServerApplicationContext.port.ToString());
+            html = html.Replace("{HTTPS_PORT}", ServerApplicationContext.https_port.ToString());
+            html = html.Replace("{USE_HTTPS}", ServerApplicationContext.use_https.ToString().ToLower());
+            html = html.Replace("{VERSION_HASH}", versionHash);
+            return html;
+        }
+
+        public static string GetHtmlFooter()
+        {
+            string html = LoadResource("footer.html");
+            if (string.IsNullOrEmpty(html)) return "";
+            
+            StringBuilder sbShells = new StringBuilder();
+            sbShells.Append("[");
+            var shells = ServerApplicationContext.availableShells;
+            for (int i = 0; i < shells.Count; i++)
+            {
+                var s = shells[i];
+                if (i > 0) sbShells.Append(",");
+                sbShells.AppendFormat("{{name:\"{0}\", exePath:\"{1}\"}}", EscapeJson(s.Name), EscapeJson(s.ExePath.Replace("\\", "\\\\")));
+            }
+            sbShells.Append("]");
+            string shellsJson = sbShells.ToString();
+            
+            string footerHtml = html.Replace("{SHELLS_JSON}", shellsJson);
+            footerHtml = footerHtml.Replace("{VERSION_HASH}", versionHash);
+            return footerHtml;
+        }
+
+        public static bool IsTextExtension(string ext)
+        {
+            if (string.IsNullOrEmpty(ext)) return false;
+            string cleanExt = ext.TrimStart('.').Trim().ToLower();
+            string[] allowed = ServerApplicationContext.textExtensionsStr.Split(new char[] { ',', ';', ' ', '\r', '\n', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (string item in allowed)
+            {
+                if (item.TrimStart('.').Trim().ToLower() == cleanExt)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public static string GetMimeType(string ext)
+        {
+            switch (ext)
+            {
+                case ".html": case ".htm": return "text/html; charset=utf-8";
+                case ".css": return "text/css";
+                case ".js": return "application/javascript";
+                case ".json": return "application/json; charset=utf-8";
+                case ".png": return "image/png";
+                case ".jpg": case ".jpeg": return "image/jpeg";
+                case ".gif": return "image/gif";
+                case ".svg": return "image/svg+xml";
+                case ".ico": return "image/x-icon";
+                case ".mp3": return "audio/mpeg";
+                case ".wav": return "audio/wav";
+                case ".mp4": return "video/mp4";
+                case ".webm": return "video/webm";
+                case ".pdf": return "application/pdf";
+                default: return "application/octet-stream";
+            }
+        }
+
+        public static string FormatFileSize(long bytes)
+        {
+            string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+            int counter = 0;
+            decimal number = bytes;
+            while (Math.Round(number / 1024) >= 1)
+            {
+                number /= 1024;
+                counter++;
+            }
+            return string.Format("{0:n1} {1}", number, suffixes[counter]);
+        }
+
+        public static string EscapeJson(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            StringBuilder sb = new StringBuilder();
+            foreach (char c in s)
+            {
+                switch (c)
+                {
+                    case '\\': sb.Append("\\\\"); break;
+                    case '"': sb.Append("\\\""); break;
+                    case '/': sb.Append("\\/"); break;
+                    case '\b': sb.Append("\\b"); break;
+                    case '\f': sb.Append("\\f"); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    default:
+                        if (c < ' ')
+                        {
+                            sb.AppendFormat("\\u{0:x4}", (int)c);
+                        }
+                        else
+                        {
+                            sb.Append(c);
+                        }
+                        break;
+                }
+            }
+            return sb.ToString();
+        }
+    
+        // --- Extracted SVG and Utility Helpers ---
+        public static string GetDriveSvg()
+        { return @"<svg class='file-icon' width='36' height='36' viewBox='0 0 24 24' fill='none' stroke='#2980b9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='2' width='20' height='8' rx='2' ry='2'></rect><rect x='2' y='14' width='20' height='8' rx='2' ry='2'></rect><line x1='6' y1='6' x2='6.01' y2='6'></line><line x1='6' y1='18' x2='6.01' y2='18'></line></svg>"; }
+
+        public static string GetFolderSvg()
+        { return @"<svg class='file-icon' width='20' height='20' viewBox='0 0 24 24' fill='#f1c40f' stroke='#d35400' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg>"; }
+
+        public static string GetFileIconSvg(string ext)
+        {
+            ext = ext.ToLower();
+            string color = "#7f8c8d"; // Default gray for standard files
+            
+            // Highlight specific file types
+            if (ext == ".txt" || ext == ".md" || ext == ".log" || ext == ".ini") color = "#3498db"; // Text files: Blue
+            else if (ext == ".html" || ext == ".css" || ext == ".js" || ext == ".json") color = "#e67e22"; // Code: Orange
+            else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" || ext == ".svg") color = "#2ecc71"; // Images: Green
+            else if (ext == ".mp3" || ext == ".wav") color = "#9b59b6"; // Audio: Purple
+            else if (ext == ".mp4" || ext == ".webm") color = "#e74c3c"; // Video: Red
+            else if (ext == ".pdf") color = "#c0392b"; // PDF: Dark Red
+            else if (ext == ".zip" || ext == ".rar" || ext == ".7z" || ext == ".tar" || ext == ".gz") color = "#f1c40f"; // Archive: Yellow
+
+            return string.Format(@"<svg class='file-icon' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='{0}' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'></path><polyline points='14 2 14 8 20 8'></polyline><line x1='16' y1='13' x2='8' y2='13'></line><line x1='16' y1='17' x2='8' y2='17'></line><polyline points='10 9 9 9 8 9'></polyline></svg>", color);
+        }
+
+        public static string PhysicalToWebPath(string physicalPath)
+        {
+            if (string.IsNullOrEmpty(physicalPath)) return "/";
+            try
+            {
+                string fullPath = Path.GetFullPath(physicalPath);
+                if (fullPath.Length >= 2 && fullPath[1] == ':')
+                {
+                    char driveLetter = char.ToLower(fullPath[0]);
+                    string subPath = fullPath.Substring(2).Replace('\\', '/').Trim('/');
+                    if (string.IsNullOrEmpty(subPath))
+                    { return "/" + driveLetter + "/"; }
+                    return "/" + driveLetter + "/" + subPath + "/";
+                }
+            }
+            catch { }
+            return "/";
+        }
+
+        public static string GetMonitorSvg()
+        { return @"<svg class='file-icon' width='36' height='36' viewBox='0 0 24 24' fill='none' stroke='#3498db' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='3' width='20' height='14' rx='2' ry='2'></rect><line x1='8' y1='21' x2='16' y2='21'></line><line x1='12' y1='17' x2='12' y2='21'></line></svg>"; }
+
+        public static string GetDocumentsSvg()
+        { return @"<svg class='file-icon' width='36' height='36' viewBox='0 0 24 24' fill='none' stroke='#2ecc71' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'></path><polyline points='14 2 14 8 20 8'></polyline><line x1='16' y1='13' x2='8' y2='13'></line><line x1='16' y1='17' x2='8' y2='17'></line><polyline points='10 9 9 9 8 9'></polyline></svg>"; }
+
+        public static string GetDownloadSvg()
+        { return @"<svg class='file-icon' width='36' height='36' viewBox='0 0 24 24' fill='none' stroke='#e67e22' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path><polyline points='7 10 12 15 17 10'></polyline><line x1='12' y1='15' x2='12' y2='3'></line></svg>"; }
+
+        public static string GetUserSvg()
+        { return @"<svg class='file-icon' width='36' height='36' viewBox='0 0 24 24' fill='none' stroke='#9b59b6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'></path><circle cx='12' cy='7' r='4'></circle></svg>"; }
+
+        // Action menu handlers
+    
+        public static void ServeDriveList(HttpListenerResponse response)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append(HttpServer.GetHtmlHeader("本地计算机 - 导航主页", ""));
+
+            // Unified compact toolbar for navigation home
+            sb.Append("<div class='toolbar'>");
+            sb.Append("  <div class='toolbar-left'>");
+            sb.Append("    <div class='address-bar-wrapper' onmousedown='activateAddressInput(event)'>");
+            sb.Append("      <div class='breadcrumbs' id='breadcrumbs-bar'>");
+            sb.Append("        <span>🏠 本地计算机导航主页</span>");
+            sb.Append("      </div>");
+            sb.Append("      <input type='text' id='address-input' style='display: none;' onkeydown='handleAddressKey(event)' onblur='deactivateAddressInput()'>");
+            sb.Append("    </div>");
+            sb.Append("    <button id='protocol-switch-btn' onclick='toggleProtocol(event)' class='btn-back' style='height: 32px; padding: 0 10px; margin-left: 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px; flex-shrink: 0;' title='一键切换 HTTP / HTTPS 安全沙箱协议'></button>");
+            sb.Append("  </div>");
+            sb.Append("  <div class='toolbar-right' style='display: flex; align-items: center; gap: 8px;'>");
+            sb.Append("    <select id='view-select' onchange='setViewMode(this.value)' style='height: 32px; background: var(--container-bg); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 8px; cursor: pointer; outline: none; font-size: 0.85rem;'>");
+            sb.Append("      <option value='details'>📋 详细信息</option>");
+            sb.Append("      <option value='large'>🔲 大图标</option>");
+            sb.Append("      <option value='medium'>⚃ 中等图标</option>");
+            sb.Append("    </select>");
+            sb.Append("    <input type='text' id='search' placeholder='🔎 快速筛选卡片...' oninput='filterCards()'>");
+            sb.Append("  </div>");
+            sb.Append("</div>");
+
+            // Section 0: Favorites (if any)
+            var favList = FileExplorer.GetFavorites();
+            if (favList.Count > 0)
+            {
+                sb.Append("<h2>⭐ 我的收藏夹</h2>");
+                sb.Append("<div class='grid'>");
+                foreach (string fav in favList)
+                {
+                    if (File.Exists(fav) || Directory.Exists(fav))
+                    {
+                        bool isDir = Directory.Exists(fav);
+                        string webLink = HttpServer.PhysicalToWebPath(fav);
+                        string ext = isDir ? "" : Path.GetExtension(fav);
+                        string icon = isDir ? HttpServer.GetFolderSvg() : HttpServer.GetFileIconSvg(ext);
+                        string name = Path.GetFileName(fav);
+                        if (string.IsNullOrEmpty(name)) name = fav; // E.g., drive root
+                        string desc = isDir ? "已收藏目录" : "已收藏文件";
+                        string htmlEscapedPath = fav.Replace("'", "&#39;").Replace("\"", "&quot;");
+                        sb.AppendFormat(
+                            "<a href='{0}' class='card drive-card fav-card' data-path='{1}' data-type='{2}' data-favorite='true' style='position:relative;'>" +
+                            "  <div class='icon-wrapper' style='color:#f1c40f;'>{3}</div>" +
+                            "  <div class='card-info'>" +
+                            "    <div class='title'>{4}</div>" +
+                            "    <div class='desc'>{5}</div>" +
+                            "  </div>" +
+                            "  <span class='fav-star-btn active' data-path='{1}'>★</span>" +
+                            "</a>",
+                            webLink, htmlEscapedPath, isDir ? "dir" : "file", icon, name, desc);
+                    }
+                }
+                sb.Append("</div>");
+                sb.Append("<hr style='border: 0; border-top: 1px solid var(--border-color); margin: 12px 0;'>");
+            }
+
+            // Section 1: Quick Access Shortcuts
+            sb.Append("<h2>🚀 常用快速访问</h2>");
+            sb.Append("<div class='grid'>");
+
+            // 1. Desktop
+            string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            if (Directory.Exists(desktopPath))
+            {
+                sb.AppendFormat(
+                    "<a href='{0}' class='card drive-card' data-path='{1}' data-type='dir'>" +
+                    "  <div class='icon-wrapper'>{2}</div>" +
+                    "  <div class='card-info'>" +
+                    "    <div class='title'>桌面 (Desktop)</div>" +
+                    "    <div class='desc'>快速访问当前系统用户的桌面</div>" +
+                    "  </div>" +
+                    "</a>",
+                    HttpServer.PhysicalToWebPath(desktopPath), desktopPath.Replace("'", "&#39;").Replace("\"", "&quot;"), HttpServer.GetMonitorSvg());
+            }
+
+            // 2. Documents
+            string docsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            if (Directory.Exists(docsPath))
+            {
+                sb.AppendFormat(
+                    "<a href='{0}' class='card drive-card' data-path='{1}' data-type='dir'>" +
+                    "  <div class='icon-wrapper'>{2}</div>" +
+                    "  <div class='card-info'>" +
+                    "    <div class='title'>我的文档 (Documents)</div>" +
+                    "    <div class='desc'>管理个人文档与软件数据文件</div>" +
+                    "  </div>" +
+                    "</a>",
+                    HttpServer.PhysicalToWebPath(docsPath), docsPath.Replace("'", "&#39;").Replace("\"", "&quot;"), HttpServer.GetDocumentsSvg());
+            }
+
+            // 3. Downloads
+            string downloadsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+            if (Directory.Exists(downloadsPath))
+            {
+                sb.AppendFormat(
+                    "<a href='{0}' class='card drive-card' data-path='{1}' data-type='dir'>" +
+                    "  <div class='icon-wrapper'>{2}</div>" +
+                    "  <div class='card-info'>" +
+                    "    <div class='title'>下载 (Downloads)</div>" +
+                    "    <div class='desc'>查看浏览器与常用软件下载的文件</div>" +
+                    "  </div>" +
+                    "</a>",
+                    HttpServer.PhysicalToWebPath(downloadsPath), downloadsPath.Replace("'", "&#39;").Replace("\"", "&quot;"), HttpServer.GetDownloadSvg());
+            }
+
+            // 4. User profile
+            string userPath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (Directory.Exists(userPath))
+            {
+                sb.AppendFormat(
+                    "<a href='{0}' class='card drive-card' data-path='{1}' data-type='dir'>" +
+                    "  <div class='icon-wrapper'>{2}</div>" +
+                    "  <div class='card-info'>" +
+                    "    <div class='title'>用户主目录 (User Profile)</div>" +
+                    "    <div class='desc'>管理当前用户的主配置文件夹</div>" +
+                    "  </div>" +
+                    "</a>",
+                    HttpServer.PhysicalToWebPath(userPath), userPath.Replace("'", "&#39;").Replace("\"", "&quot;"), HttpServer.GetUserSvg());
+            }
+
+            // 5. Gradle Dependency Browser Entry on Lobby
+             sb.Append(
+                 "<a href='/?view=gradle' class='card drive-card' data-path='/?view=gradle' data-type='dir'>" +
+                 "  <div class='icon-wrapper' style='font-size: 2rem; display: flex; align-items: center; justify-content: center;'>☕</div>" +
+                 "  <div class='card-info'>" +
+                 "    <div class='title'>Gradle 依赖管理</div>" +
+                 "    <div class='desc'>极速扫描、模糊搜索并级联分析 KMP &amp; POM 依赖缓存</div>" +
+                 "  </div>" +
+                 "</a>"
+             );
+
+            sb.Append("</div>");
+            sb.Append("<hr style='border: 0; border-top: 1px solid var(--border-color); margin: 12px 0;'>");
+
+            // Section 2: Physical Drives
+            sb.Append("<h2>💾 本地计算机磁盘分区</h2>");
+            sb.Append("<div class='grid'>");
+
+            DriveInfo[] drives = DriveInfo.GetDrives();
+            foreach (DriveInfo drive in drives)
+            {
+                if (drive.IsReady)
+                {
+                    string dLetter = drive.Name.Substring(0, 1).ToLower();
+                    string sizeInfo = string.Format("可用: {0} GB / 共 {1} GB", 
+                        drive.AvailableFreeSpace / 1024 / 1024 / 1024, 
+                        drive.TotalSize / 1024 / 1024 / 1024);
+                    string htmlEscapedDrivePath = drive.Name.Replace("'", "&#39;").Replace("\"", "&quot;");
+
+                    sb.AppendFormat(
+                        "<a href='/{0}/' class='card drive-card' data-path='{1}' data-type='dir' data-drive='true'>" +
+                        "  <div class='icon-wrapper'>{2}</div>" +
+                        "  <div class='card-info'>" +
+                        "    <div class='title'>本地磁盘 ({3}:)</div>" +
+                        "    <div class='desc'>{4}</div>" +
+                        "  </div>" +
+                        "</a>",
+                        dLetter, htmlEscapedDrivePath, HttpServer.GetDriveSvg(), drive.Name.Substring(0, 1), sizeInfo);
+                }
+            }
+            sb.Append("</div>");
+
+            sb.Append(HttpServer.GetHtmlFooter());
+
+            byte[] buffer = Encoding.UTF8.GetBytes(sb.ToString());
+            response.ContentType = "text/html; charset=utf-8";
+            response.ContentLength64 = buffer.Length;
+            response.OutputStream.Write(buffer, 0, buffer.Length);
+            response.OutputStream.Close();
+        }
+    
+        
+        public static Encoding DetectEncoding(string filePath)
+        {
+            byte[] bom = new byte[4];
+            int readBytes = 0;
+            try
+            {
+                using (var file = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    readBytes = file.Read(bom, 0, 4);
+                }
+            }
+            catch { }
+
+            if (readBytes >= 3 && bom[0] == 0xef && bom[1] == 0xbb && bom[2] == 0xbf) return Encoding.UTF8;
+            if (readBytes >= 2 && bom[0] == 0xff && bom[1] == 0xfe) return Encoding.Unicode; // UTF-16 LE
+            if (readBytes >= 2 && bom[0] == 0xfe && bom[1] == 0xff) return Encoding.BigEndianUnicode; // UTF-16 BE
+            if (readBytes >= 4 && bom[0] == 0x00 && bom[1] == 0x00 && bom[2] == 0xfe && bom[3] == 0xff) return Encoding.UTF32;
+
+            // Heuristic detection: Read 8KB buffer and analyze UTF-8 integrity
+            byte[] buffer = new byte[8192];
+            int bufferRead = 0;
+            try
+            {
+                using (var file = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    bufferRead = file.Read(buffer, 0, buffer.Length);
+                }
+            }
+            catch { }
+
+            if (bufferRead > 0 && IsValidUtf8(buffer, bufferRead))
+            { return Encoding.UTF8; }
+
+            // Fallback to GBK/CP936 for standard Windows Chinese compatibility, then system default ANSI
+            try
+            {
+                return Encoding.GetEncoding(936); // GBK
+            }
+            catch
+            { return Encoding.Default; }
+        }
+
+        public static bool IsValidUtf8(byte[] buffer, int length)
+        {
+            int i = 0;
+            while (i < length)
+            {
+                if (buffer[i] < 0x80)
+                {
+                    i++;
+                    continue;
+                }
+                int expectedLength = 0;
+                if ((buffer[i] & 0xE0) == 0xC0) expectedLength = 1;
+                else if ((buffer[i] & 0xF0) == 0xE0) expectedLength = 2;
+                else if ((buffer[i] & 0xF8) == 0xF0) expectedLength = 3;
+                else return false;
+
+                if (i + expectedLength >= length)
+                {
+                    for (int j = 1; i + j < length; j++)
+                    {
+                        if ((buffer[i + j] & 0xC0) != 0x80) return false;
+                    }
+                    return true;
+                }
+                for (int j = 1; j <= expectedLength; j++)
+                {
+                    if ((buffer[i + j] & 0xC0) != 0x80) return false;
+                }
+                i += 1 + expectedLength;
+            }
+            return true;
+        }
+
+    }
+}

@@ -1,0 +1,40 @@
+    </div>
+     <!-- Modal for Properties -->
+    <div id='properties-modal' class='modal'>
+        <div class='modal-content'>
+            <div class='modal-header'>
+                <span class='modal-title'>🎛️ 属性</span>
+                <button class='modal-close' onclick='closeProperties()'>&times;</button>
+            </div>
+            <div class='modal-body' id='properties-body'></div>
+            <div class='modal-footer'>
+                <button class='modal-btn' onclick='closeProperties()'>确定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Log Trigger Button -->
+    <button class='log-trigger-btn' onclick='showLogs()'>
+        <span>📝</span> 系统日志
+    </button>
+
+    <!-- Log Modal -->
+    <div id='log-modal' class='modal'>
+        <div class='modal-content log-modal-content'>
+            <div class='modal-header'>
+                <span class='modal-title'>📝 系统运行日志</span>
+                <button class='modal-close' onclick='closeLogs()'>&times;</button>
+            </div>
+            <div class='modal-body'>
+                <div class='log-container' id='log-container'></div>
+            </div>
+            <div class='modal-footer'>
+                <button class='modal-btn' style='background: var(--text-muted); margin-right: 10px;' onclick='clearLogs()'>清空</button>
+                <button class='modal-btn' onclick='closeLogs()'>确定</button>
+            </div>
+        </div>
+    </div>
+    <script>const availableShells = {SHELLS_JSON};</script>
+    <script src='/app.js?v={VERSION_HASH}'></script>
+</body>
+</html>

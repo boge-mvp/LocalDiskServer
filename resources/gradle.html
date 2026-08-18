@@ -1,0 +1,123 @@
+<div class='explorer-main'>
+<div class='toolbar'>
+  <div class='toolbar-left'>
+    <div class='address-bar-wrapper'>
+      <div class='breadcrumbs'>
+        <a href='/'>🏠 首页</a> <span class='separator'>/</span> <span class='breadcrumb-current'>☕ Gradle 依赖管理</span>
+      </div>
+    </div>
+    <button id='protocol-switch-btn' onclick='toggleProtocol(event)' class='btn-back' style='height: 32px; padding: 0 10px; margin-left: 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px; flex-shrink: 0;' title='一键切换 HTTP / HTTPS 安全沙箱协议'></button>
+  </div>
+  <div class='toolbar-right' style='display: flex; align-items: center; gap: 8px;'>
+    <input type='text' id='gradle-search-input' placeholder='🔎 模糊搜索已缓存依赖库 (如: coroutines)...' oninput='onGradleSearchChange()' style='width: 300px; height: 32px; box-sizing: border-box; padding: 4px 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); font-size: 0.9rem;'>
+    <button class='btn-back' onclick='triggerGradleScan()' style='height: 32px; padding: 0 12px; margin-left: 0; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem;' id='gradle-refresh-btn'>🔄 重新扫描</button>
+  </div>
+</div>
+<div style='padding: 6px 12px; background: var(--container-bg); border: 1px solid var(--border-color); border-radius: 6px; margin-bottom: 10px; font-size: 0.85rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 15px;'>
+  <div style='display: flex; align-items: center; gap: 6px; font-weight: bold; color: var(--accent-hover);'><span style='font-size:1.1rem;'>☕</span> Gradle 缓存摘要:</div>
+  <div style='display: flex; align-items: center; gap: 15px; flex-wrap: wrap;'>
+    <div><span style='color: var(--text-muted);'>🏠 根目录:</span> <strong id='gradle-stat-home' style='font-family: monospace; font-size: 0.8rem;'>-</strong></div>
+    <div style='width: 1px; height: 12px; background: var(--border-color);'></div>
+    <div><span style='color: var(--text-muted);'>📦 依赖数:</span> <strong id='gradle-stat-count'>-</strong></div>
+    <div style='width: 1px; height: 12px; background: var(--border-color);'></div>
+    <div><span style='color: var(--text-muted);'>⚙️ KMP占比:</span> <strong id='gradle-stat-kmp' style='color: var(--accent-hover);'>-</strong></div>
+    <div style='width: 1px; height: 12px; background: var(--border-color);'></div>
+    <div><span style='color: var(--text-muted);'>📊 总容量:</span> <strong id='gradle-stat-size'>-</strong></div>
+  </div>
+</div>
+<h2 style='margin-top: 0; margin-bottom: 8px; font-size: 1.15rem; display: flex; align-items: center; gap: 6px;'>💾 本地已缓存 Gradle Wrappers 分发包</h2>
+<div id='gradle-wrappers-grid' class='custom-scrollbar' style='display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 10px; margin-bottom: 12px; padding-bottom: 8px; height: 60px; align-items: center; flex-shrink: 0; -webkit-overflow-scrolling: touch; box-sizing: border-box;'>
+  <div style='padding: 10px; color: var(--text-muted); text-align: center; grid-column: 1/-1; font-size: 0.85rem;'>🔄 正在扫描本地 Gradle Wrapper 缓存...</div>
+</div>
+<h2 id='gradle-list-title'>📦 已缓存的依赖库列表</h2>
+<div class='gradle-deps-container' style='border: 1px solid var(--border-color); border-radius: 6px; background: rgba(0,0,0,0.1); position: relative; margin-bottom: 10px;'>
+  <table class='file-table' style='width: 100%; border-collapse: collapse;'>
+    <thead style='background: var(--container-bg); box-shadow: 0 1px 0 var(--border-color);'>
+      <tr style='background: var(--bg-color); border-bottom: 1px solid var(--border-color); text-align: left;'>
+        <th style='padding: 8px 10px; width: 60%;'>依赖坐标 (GroupId : ArtifactId)</th>
+        <th style='padding: 8px 10px; width: 15%;'>版本</th>
+        <th style='padding: 8px 10px; width: 10%; text-align: center;'>KMP</th>
+        <th style='padding: 8px 10px; width: 15%; text-align: right;'>大小</th>
+      </tr>
+    </thead>
+    <tbody id='gradle-deps-tbody'>
+      <tr>
+        <td colspan='4' style='padding: 20px; text-align: center; color: var(--text-muted);'>🔄 正在载入本地 Gradle 依赖库...</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<div id='gradle-pagination' style='margin-top: 10px; display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; padding: 6px 10px; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 4px;'>
+  <div style='color: var(--text-muted);' id='pagination-info'>第 1 / 1 页 (共 0 条)</div>
+  <div style='display: flex; align-items: center; gap: 10px;'>
+    <span>每页显示:</span>
+    <select id='gradle-page-size' onchange='changeGradlePageSize()' style='background: var(--container-bg); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 3px; padding: 2px 6px; cursor: pointer; outline: none;'>
+      <option value='10'>10</option>
+      <option value='25'>25</option>
+      <option value='50'>50</option>
+      <option value='100'>100</option>
+    </select>
+  </div>
+  <div style='display: flex; gap: 5px;'>
+    <button onclick='gradleGoToPage("first")' class='btn' style='padding: 3px 8px; font-size: 0.8rem; cursor: pointer;'>首页</button>
+    <button onclick='gradleGoToPage("prev")' class='btn' style='padding: 3px 8px; font-size: 0.8rem; cursor: pointer;'>上一页</button>
+    <button onclick='gradleGoToPage("next")' class='btn' style='padding: 3px 8px; font-size: 0.8rem; cursor: pointer;'>下一页</button>
+    <button onclick='gradleGoToPage("last")' class='btn' style='padding: 3px 8px; font-size: 0.8rem; cursor: pointer;'>尾页</button>
+  </div>
+</div>
+</div>
+<div class='explorer-preview' id='preview-pane' style='width: 340px; flex-shrink: 0; background: var(--container-bg); border-left: 1px solid var(--border-color); display: flex; flex-direction: column; overflow: hidden; padding: 0 !important;'>
+  <div class='sidebar-expand-btn' onclick='toggleSidebar("right")' style='display: none;'>◀ 预 览</div>
+  <div class='sidebar-title' style='display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 12px 15px; border-bottom: 1px solid var(--border-color); box-sizing: border-box;'>
+    <span>🎛️ 依赖详情</span>
+    <span class='sidebar-toggle-btn' onclick='toggleSidebar("right"); event.stopPropagation();' style='cursor: pointer; font-size: 0.8rem; color: var(--text-muted); padding: 2px 6px; border-radius: 4px;' title='收起右栏'>▶</span>
+  </div>
+  <div id='gradle-preview-body' style='flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; min-width: 0; width: 100%; box-sizing: border-box;'>
+    <div style='text-align: center; color: var(--text-muted); margin-top: 40px; padding: 10px;'>
+      <span style='font-size: 2.5rem; display: block; margin-bottom: 12px;'>☕</span>
+      点击左侧依赖库列表中的任何一项，即可在此处查看其 KMP 架构适配性、POM 级联依赖集和 Gradle 复制代码。
+    </div>
+  </div>
+</div>
+
+<!-- Modal for multiple versions list -->
+<div id='versions-modal' class='modal'>
+  <div class='modal-content' style='width: 520px; max-width: 90%;'>
+    <div class='modal-header'>
+      <span class='modal-title' id='versions-modal-title'>📦 缓存版本详情列表</span>
+      <button class='modal-close' onclick='closeVersionsModal()'>&times;</button>
+    </div>
+    <div class='modal-body' id='versions-modal-body' style='max-height: 380px; overflow-y: auto; padding: 15px;'></div>
+    <div class='modal-footer'>
+      <button class='modal-btn' onclick='closeVersionsModal()'>确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal for full POM dependencies tree -->
+<div id='dependencies-modal' class='modal'>
+  <div class='modal-content' style='width: 580px; max-width: 92%;'>
+    <div class='modal-header'>
+      <span class='modal-title' id='dependencies-modal-title'>🔗 完整级联依赖集列表</span>
+      <button class='modal-close' onclick='closeDepsListModal()'>&times;</button>
+    </div>
+    <div class='modal-body' id='dependencies-modal-body' style='max-height: 420px; overflow-y: auto; padding: 15px;'></div>
+    <div class='modal-footer'>
+      <button class='modal-btn' onclick='closeDepsListModal()'>确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal for downloaded files list of a specific version -->
+<div id='files-modal' class='modal' style='z-index: 2000;'>
+  <div class='modal-content' style='width: 620px; max-width: 95%;'>
+    <div class='modal-header'>
+      <span class='modal-title' id='files-modal-title'>📄 缓存文件详情列表</span>
+      <button class='modal-close' onclick='closeFilesModal()'>&times;</button>
+    </div>
+    <div class='modal-body' id='files-modal-body' style='max-height: 380px; overflow-y: auto; padding: 15px;'></div>
+    <div class='modal-footer'>
+      <button class='modal-btn' onclick='closeFilesModal()'>确定</button>
+    </div>
+  </div>
+</div>
