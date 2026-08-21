@@ -23,7 +23,7 @@
 - 🔒 **HTTPS 双通道与证书自愈**：一键开启 HTTPS 双通道支持，程序内部自动调用 Windows 底层接口生成并注册受信任的本地根 CA 证书，免去繁琐配置。
 - 🌐 **多语言国际化 (i18n)**：
   - 启动后自动将内嵌语言包释放至 `locales/` 目录。
-  - 智能识别 Windows 系统语言；支持自定义扩展（如添加 `ja-JP.ini`）。
+  - 智能识别 Windows 系统语言；支持自定义扩展（如添加西班牙语 `es-ES.ini`）。
   - 托盘右键菜单支持动态扫描与无缝热切换。
 - 📦 **Gradle 缓存与 Wrapper 浏览器**：后台异步扫描并可视化展现本地 Gradle Wrapper、KMP/Android 依赖包、缓存体积与物理路径。
 - 💻 **多终端一键直达**：自动探测 Windows Terminal、PowerShell 7、Git Bash、CMD 等终端环境，支持在任意网页目录下一键拉起终端。
@@ -84,7 +84,7 @@ LocalDiskServer/
 - 🌐 **Full Internationalization (i18n)**:
   - Automatically extracts embedded locale bundles into the `locales/` directory upon launch.
   - Automatically detects the Windows system UI language and supports dynamic switching from tray menu.
-  - Easy extension by simply dropping custom `.ini` files into `locales/`.
+  - Easy extension by simply dropping custom `.ini` files (e.g. `es-ES.ini` for Spanish) into `locales/`.
 - 📦 **Gradle Cache & Wrapper Explorer**: Scans, indexes, and visualizes local Gradle Wrappers, KMP/Android dependencies, cache sizes, and local storage paths.
 - 💻 **Integrated Multi-Terminal Launch**: Auto-detects Windows Terminal, PowerShell 7, Git Bash, and CMD to open any directory in your favorite shell with one click.
 - 👁️ **File Previews & Code Highlighting**: In-browser viewing and syntax highlighting for common text, source code, and media files.

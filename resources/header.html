@@ -9,6 +9,16 @@
       const httpPort = {HTTP_PORT};
       const httpsPort = {HTTPS_PORT};
       const useHttps = {USE_HTTPS};
+      window.I18N_DICT = {I18N_JSON};
+      window.t = function(key, ...args) {
+          let str = (window.I18N_DICT && window.I18N_DICT[key]) || key;
+          if (args.length > 0) {
+              args.forEach((val, idx) => {
+                  str = str.replace(new RegExp('\\{' + idx + '\\}', 'g'), val);
+              });
+          }
+          return str;
+      };
     </script>
 </head>
 <body class='{BODY_CLASS}'>

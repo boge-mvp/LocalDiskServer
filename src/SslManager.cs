@@ -52,7 +52,7 @@ namespace LocalDiskServer
                 psi.UseShellExecute = true;
                 psi.WindowStyle = ProcessWindowStyle.Hidden;
 
-                Logger.Log(string.Format("启动提权进程，绑定 SSL 端口 {0}...", newPort));
+                Logger.Log(I18nManager.T("log_ssl_bind_start", newPort));
                 using (Process proc = Process.Start(psi))
                 {
                     proc.WaitForExit(30000); // 最多等 30 秒
@@ -74,15 +74,15 @@ namespace LocalDiskServer
                         ServerApplicationContext.ssl_hash = thumbprint;
                         ServerApplicationContext.last_bound_https_port = newPort;
                         ServerApplicationContext.SaveConfigStatic();
-                        Logger.Log("SSL 证书绑定成功，指纹: " + thumbprint);
+                        Logger.Log(I18nManager.T("log_ssl_bind_success", thumbprint));
                         return;
                     }
                 }
-                Logger.Log("SSL 证书绑定失败，未能读取到指纹。");
+                Logger.Log(I18nManager.T("log_ssl_bind_failed"));
             }
             catch (Exception ex)
             {
-                Logger.Log("BindSslCertificate 异常: " + ex.Message);
+                Logger.Log(I18nManager.T("log_ssl_bind_ex", ex.Message));
             }
         }
 
@@ -103,16 +103,16 @@ namespace LocalDiskServer
                 psi.UseShellExecute = true;
                 psi.WindowStyle = ProcessWindowStyle.Hidden;
 
-                Logger.Log(string.Format("启动提权进程，解绑 SSL 端口 {0}...", port));
+                Logger.Log(I18nManager.T("log_ssl_unbind_start", port));
                 using (Process proc = Process.Start(psi))
                 {
                     proc.WaitForExit(15000);
                 }
-                Logger.Log(string.Format("SSL 端口 {0} 已尝试解绑。", port));
+                Logger.Log(I18nManager.T("log_ssl_unbind_success", port));
             }
             catch (Exception ex)
             {
-                Logger.Log("UnbindSslCertificate 异常: " + ex.Message);
+                Logger.Log(I18nManager.T("log_ssl_unbind_ex", ex.Message));
             }
         }
     }

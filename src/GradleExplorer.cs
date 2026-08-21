@@ -28,7 +28,7 @@ namespace LocalDiskServer
                 if (isGradleScanning) return;
                 isGradleScanning = true;
             }
-            Logger.Log("启动 Gradle 依赖及 Wrappers 后台异步扫描线程...");
+            Logger.Log(I18nManager.T("log_gradle_scan_thread_started"));
             System.Threading.ThreadPool.QueueUserWorkItem(delegate {
                 try
                 {
@@ -36,7 +36,7 @@ namespace LocalDiskServer
                 }
                 catch (Exception ex)
                 {
-                    Logger.Log("Gradle 后台扫描发生异常: " + ex.Message);
+                    Logger.Log(I18nManager.T("log_gradle_scan_ex", ex.Message));
                 }
                 finally
                 {
@@ -167,7 +167,7 @@ namespace LocalDiskServer
                 cachedDependencies.Clear();
                 cachedDependencies.AddRange(tmpDeps);
             }
-            Logger.Log(string.Format("Gradle 后台扫描已完成：找到 {0} 个依赖包，KMP 占比 {1}，总缓存 {2}", depCount, kmpCount, HttpServer.FormatFileSize(totalSize)));
+            Logger.Log(I18nManager.T("log_gradle_scan_finished", depCount, kmpCount, HttpServer.FormatFileSize(totalSize)));
         }
 
         private static string GetGradleHome()
@@ -206,26 +206,26 @@ namespace LocalDiskServer
             return null;
         }
 
-public static void ServeGradleDashboard(HttpListenerResponse response)
+        public static void ServeGradleDashboard(HttpListenerResponse response)
         {
             StringBuilder sb = new StringBuilder();
-            sb.Append(HttpServer.GetHtmlHeader("Gradle 依赖管理", "", "layout-explorer"));
+            sb.Append(HttpServer.GetHtmlHeader(I18nManager.T("gradle_page_title"), "", "layout-explorer"));
             sb.Append("<script>const currentView = 'gradle';</script>");
 
             var favList = FileExplorer.GetFavorites();
 
             // Left Sidebar Tree Pane
             sb.Append("<div class='explorer-sidebar' id='sidebar-pane'>");
-            sb.Append("  <div class='sidebar-expand-btn' onclick='toggleSidebar(\"left\")' style='display: none;'>▶ 导 航</div>");
+            sb.AppendFormat("  <div class='sidebar-expand-btn' onclick='toggleSidebar(\"left\")' style='display: none;'>{0}</div>", I18nManager.T("nav_btn_expand"));
             sb.Append("  <div class='sidebar-title' style='display: flex; justify-content: space-between; align-items: center; width: 100%;'>");
-            sb.Append("    <span>📂 导航目录</span>");
-            sb.Append("    <span class='sidebar-toggle-btn' onclick='toggleSidebar(\"left\"); event.stopPropagation();' style='cursor: pointer; font-size: 0.8rem; color: var(--text-muted); padding: 2px 6px; border-radius: 4px;' title='收起左栏'>◀</span>");
+            sb.AppendFormat("    <span>📂 {0}</span>", I18nManager.T("nav_title"));
+            sb.AppendFormat("    <span class='sidebar-toggle-btn' onclick='toggleSidebar(\"left\"); event.stopPropagation();' style='cursor: pointer; font-size: 0.8rem; color: var(--text-muted); padding: 2px 6px; border-radius: 4px;' title='{0}'>◀</span>", I18nManager.T("nav_btn_collapse"));
             sb.Append("  </div>");
             sb.Append("  <div class='tree-container'>");
             
             // 1. Home Node
             sb.Append("    <div class='tree-node root-node'>");
-            sb.Append("      <a href='/' class='tree-link'>🏠 导航主页</a>");
+            sb.AppendFormat("      <a href='/' class='tree-link'>🏠 {0}</a>", I18nManager.T("nav_home"));
             sb.Append("    </div>");
 
             // 2. Quick Access Node
@@ -233,25 +233,16 @@ public static void ServeGradleDashboard(HttpListenerResponse response)
             sb.Append("      <div class='tree-row' onclick='toggleTreeNode(\"quick-access\")'>");
             sb.Append("        <span class='tree-arrow'>▼</span>");
             sb.Append("        <span class='tree-folder-icon'>🚀</span>");
-            sb.Append("        <span class='tree-text'>常用快速访问</span>");
+            sb.AppendFormat("        <span class='tree-text'>{0}</span>", I18nManager.T("quick_access_title"));
             sb.Append("      </div>");
             sb.Append("      <div class='tree-children' id='children-quick-access'>");
 
-            string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-            if (Directory.Exists(desktopPath))
-                sb.AppendFormat("        <a href='/c/Users/{0}/Desktop/' class='tree-link' title='{1}'>🖥️ 桌面</a>", Environment.UserName, desktopPath.Replace("'", "\\'"));
-            
-            string downloadsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
-            if (Directory.Exists(downloadsPath))
-                sb.AppendFormat("        <a href='/c/Users/{0}/Downloads/' class='tree-link' title='{1}'>📥 下载</a>", Environment.UserName, downloadsPath.Replace("'", "\\'"));
-
-            string docsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            if (Directory.Exists(docsPath))
-                sb.AppendFormat("        <a href='/c/Users/{0}/Documents/' class='tree-link' title='{1}'>📁 我的文档</a>", Environment.UserName, docsPath.Replace("'", "\\'"));
-
-            string profilePath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (Directory.Exists(profilePath))
-                sb.AppendFormat("        <a href='/c/Users/{0}/' class='tree-link' title='{1}'>👤 用户主目录</a>", Environment.UserName, profilePath.Replace("'", "\\'"));
+            var quickItems = FileExplorer.GetStandardQuickAccessItems();
+            foreach (var q in quickItems)
+            {
+                sb.AppendFormat("        <a href='{0}' class='tree-link' title='{1}'>{2} {3}</a>",
+                    q.WebPath, q.PhysicalPath.Replace("'", "\\'"), q.Emoji, q.Title);
+            }
 
             sb.Append("      </div>");
             sb.Append("    </div>");
@@ -261,7 +252,7 @@ public static void ServeGradleDashboard(HttpListenerResponse response)
             sb.Append("      <div class='tree-row' onclick='toggleTreeNode(\"favorites\")'>");
             sb.Append("        <span class='tree-arrow'>▼</span>");
             sb.Append("        <span class='tree-folder-icon'>⭐</span>");
-            sb.Append("        <span class='tree-text'>我的收藏夹</span>");
+            sb.AppendFormat("        <span class='tree-text'>{0}</span>", I18nManager.T("nav_favorites"));
             sb.Append("      </div>");
             sb.Append("      <div class='tree-children' id='children-favorites'>");
             foreach (string fav in favList)
@@ -282,7 +273,7 @@ public static void ServeGradleDashboard(HttpListenerResponse response)
             sb.Append("      <div class='tree-row' onclick='toggleTreeNode(\"drives\")'>");
             sb.Append("        <span class='tree-arrow'>▼</span>");
             sb.Append("        <span class='tree-folder-icon'>💾</span>");
-            sb.Append("        <span class='tree-text'>物理磁盘分区</span>");
+            sb.AppendFormat("        <span class='tree-text'>{0}</span>", I18nManager.T("nav_drives"));
             sb.Append("      </div>");
             sb.Append("      <div class='tree-children' id='children-drives'>");
             var drives = DriveInfo.GetDrives();
@@ -307,14 +298,48 @@ public static void ServeGradleDashboard(HttpListenerResponse response)
 
             // 5. Gradle Node (active!)
             sb.Append("    <div class='tree-node root-node active-node' style='margin-top: 10px; border-top: 1px solid var(--border-color); padding-top: 8px;'>");
-            sb.Append("      <a href='/?view=gradle' class='tree-link active-node' style='font-weight: bold;'>☕ Gradle 依赖管理</a>");
+            sb.AppendFormat("      <a href='/?view=gradle' class='tree-link active-node' style='font-weight: bold;'>☕ {0}</a>", I18nManager.T("nav_gradle"));
             sb.Append("    </div>");
 
             sb.Append("  </div>");
             sb.Append("</div>");
 
             // Load and append middle & right column layout from gradle.html
-            sb.Append(HttpServer.LoadResource("gradle.html"));
+            string gradleHtml = HttpServer.LoadResource("gradle.html");
+            gradleHtml = gradleHtml.Replace("{GRADLE_BREADCRUMB_HOME}", I18nManager.T("gradle_breadcrumb_home"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_PAGE_TITLE}", I18nManager.T("gradle_page_title"));
+            gradleHtml = gradleHtml.Replace("{LOBBY_PROTO_TOGGLE_TITLE}", I18nManager.T("lobby_proto_toggle_title"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_SEARCH_PLACEHOLDER}", I18nManager.T("gradle_search_placeholder"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_BTN_RESCAN}", I18nManager.T("gradle_btn_rescan"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_SUMMARY_TITLE}", I18nManager.T("gradle_summary_title"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_STAT_HOME}", I18nManager.T("gradle_stat_home"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_STAT_COUNT}", I18nManager.T("gradle_stat_count"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_STAT_KMP}", I18nManager.T("gradle_stat_kmp"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_STAT_SIZE}", I18nManager.T("gradle_stat_size"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_WRAPPERS_TITLE}", I18nManager.T("gradle_wrappers_title"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_WRAPPERS_SCANNING}", I18nManager.T("gradle_wrappers_scanning"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_LIST_TITLE}", I18nManager.T("gradle_list_title"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_TH_COORD}", I18nManager.T("gradle_th_coord"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_TH_VERSION}", I18nManager.T("gradle_th_version"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_TH_KMP}", I18nManager.T("gradle_th_kmp"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_TH_SIZE}", I18nManager.T("gradle_th_size"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_LOADING}", I18nManager.T("gradle_loading"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_PAGINATION_INFO}", I18nManager.T("gradle_pagination_info", 1, 1, 0));
+            gradleHtml = gradleHtml.Replace("{GRADLE_PAGE_SIZE_LABEL}", I18nManager.T("gradle_page_size_label"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_PAGE_FIRST}", I18nManager.T("gradle_page_first"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_PAGE_PREV}", I18nManager.T("gradle_page_prev"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_PAGE_NEXT}", I18nManager.T("gradle_page_next"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_PAGE_LAST}", I18nManager.T("gradle_page_last"));
+            gradleHtml = gradleHtml.Replace("{PREVIEW_BTN_EXPAND}", I18nManager.T("preview_btn_expand"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_DETAIL_TITLE}", I18nManager.T("gradle_detail_title"));
+            gradleHtml = gradleHtml.Replace("{PREVIEW_BTN_COLLAPSE}", I18nManager.T("preview_btn_collapse"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_DETAIL_EMPTY}", I18nManager.T("gradle_detail_empty"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_MODAL_VERSIONS}", I18nManager.T("gradle_modal_versions"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_MODAL_DEPS}", I18nManager.T("gradle_modal_deps"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_MODAL_FILES}", I18nManager.T("gradle_modal_files"));
+            gradleHtml = gradleHtml.Replace("{MODAL_BTN_OK}", I18nManager.T("modal_btn_ok"));
+
+            sb.Append(gradleHtml);
 
             sb.Append(HttpServer.GetHtmlFooter());
 
@@ -405,7 +430,7 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
                     string gHome = GetGradleHome();
                     if (string.IsNullOrEmpty(gHome))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"未在宿主系统中检测到有效的 Gradle 缓存根目录\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_no_root"))));
                         return true;
                     }
                     
@@ -436,7 +461,7 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
                     string gHome = GetGradleHome();
                     if (string.IsNullOrEmpty(gHome))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"未在宿主系统中检测到有效的 Gradle 缓存根目录\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_no_root"))));
                         return true;
                     }
 
@@ -474,12 +499,12 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
                     }
                     if (alreadyScanning)
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"扫描已经在进行中，请勿重复发起\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_scanning"))));
                     }
                     else
                     {
                         GradleExplorer.TriggerGradleScanAsync();
-                        HttpServer.ServeJson(response, 200, "{\"success\":true,\"message\":\"已成功拉起后台扫描\"}");
+                        HttpServer.ServeJson(response, 200, string.Format("{{\"success\":true,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_scan_started"))));
                     }
                 }
                 else if (rawPath.Equals("api/gradle/delete-wrapper", StringComparison.OrdinalIgnoreCase))
@@ -487,13 +512,13 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
                     string pathStr = request.QueryString["path"];
                     if (string.IsNullOrEmpty(pathStr))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"缺少路径参数\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_missing_path"))));
                         return true;
                     }
                     string gHome = GetGradleHome();
                     if (string.IsNullOrEmpty(gHome))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"未在宿主系统中检测到有效的 Gradle 缓存根目录\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_no_root"))));
                         return true;
                     }
                     string allowedPrefix = Path.Combine(gHome, "wrapper", "dists").ToLower();
@@ -501,7 +526,7 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
                     
                     if (!fullPath.StartsWith(allowedPrefix) || fullPath == allowedPrefix)
                     {
-                        HttpServer.ServeJson(response, 403, "{\"success\":false,\"message\":\"非法操作：该路径不在可清理的 Gradle Wrapper 分发包白名单范围内\"}");
+                        HttpServer.ServeJson(response, 403, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_illegal_wrapper_path"))));
                         return true;
                     }
                     
@@ -510,7 +535,7 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
                         try
                         {
                             Directory.Delete(pathStr, true);
-                            Logger.Log("已物理清理已解压的 Gradle Wrapper 分发包：" + Path.GetFileName(pathStr));
+                            Logger.Log(I18nManager.T("log_gradle_wrapper_deleted", Path.GetFileName(pathStr)));
                             GradleExplorer.TriggerGradleScanAsync();
                             HttpServer.ServeJson(response, 200, "{\"success\":true}");
                         }
@@ -521,7 +546,7 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
                     }
                     else
                     {
-                        HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"指定的分发包文件夹不存在\"}");
+                        HttpServer.ServeJson(response, 404, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_wrapper_not_found"))));
                     }
                 }
                 else if (rawPath.Equals("api/gradle/wrapper-detail", StringComparison.OrdinalIgnoreCase))
@@ -529,26 +554,26 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
                     string version = request.QueryString["version"] ?? "";
                     if (string.IsNullOrEmpty(version))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"Missing version\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_missing_param"))));
                         return true;
                     }
                     string gHome = GetGradleHome();
                     if (string.IsNullOrEmpty(gHome))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"未在宿主系统中检测到有效的 Gradle 缓存根目录\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_no_root"))));
                         return true;
                     }
                     string distsDir = Path.Combine(gHome, Path.Combine("wrapper", "dists"));
                     if (!Directory.Exists(distsDir))
                     {
-                        HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"Wrapper dists folder not found\"}");
+                        HttpServer.ServeJson(response, 404, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_wrapper_dists_not_found"))));
                         return true;
                     }
 
                     string[] subdirs = Directory.GetDirectories(distsDir, "gradle-" + version + "-*");
                     if (subdirs.Length == 0)
                     {
-                        HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"Selected Wrapper version folder not found\"}");
+                        HttpServer.ServeJson(response, 404, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_wrapper_ver_not_found"))));
                         return true;
                     }
 
@@ -610,14 +635,14 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
 
                     if (string.IsNullOrEmpty(group) || string.IsNullOrEmpty(artifact) || string.IsNullOrEmpty(version))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"Missing group, name or version\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_missing_param"))));
                         return true;
                     }
 
                     string gHome = GetGradleHome();
                     if (string.IsNullOrEmpty(gHome))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"未在宿主系统中检测到有效的 Gradle 缓存根目录\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_no_root"))));
                         return true;
                     }
                     string files21Path = Path.Combine(gHome, "caches", "modules-2", "files-2.1");
@@ -625,7 +650,7 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
 
                     if (!Directory.Exists(versionDir))
                     {
-                        HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"Dependency version folder not found in caches\"}");
+                        HttpServer.ServeJson(response, 404, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_dep_not_found"))));
                         return true;
                     }
 
@@ -767,14 +792,14 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
 
                     if (string.IsNullOrEmpty(group) || string.IsNullOrEmpty(name) || string.IsNullOrEmpty(version))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"Missing parameters\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_missing_param"))));
                         return true;
                     }
 
                     string gHome = GetGradleHome();
                     if (string.IsNullOrEmpty(gHome))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"未在宿主系统中检测到有效的 Gradle 缓存根目录\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_no_root"))));
                         return true;
                     }
                     string files21Path = Path.Combine(gHome, "caches", "modules-2", "files-2.1");
@@ -785,7 +810,7 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
                         try
                         {
                             Directory.Delete(versionDir, true);
-                            Logger.Log(string.Format("已物理清理 Gradle 依赖库版本：{0}:{1}:{2}", group, name, version));
+                            Logger.Log(I18nManager.T("log_gradle_dep_deleted", group, name, version));
                             HttpServer.ServeJson(response, 200, "{\"success\":true}");
                         }
                         catch (Exception ex)
@@ -795,7 +820,7 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
                     }
                     else
                     {
-                        HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"未找到该依赖库版本目录\"}");
+                        HttpServer.ServeJson(response, 404, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_dep_not_found"))));
                     }
                 }
                 else if (rawPath.Equals("api/gradle/version-files", StringComparison.OrdinalIgnoreCase))
@@ -806,14 +831,14 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
 
                     if (string.IsNullOrEmpty(group) || string.IsNullOrEmpty(name) || string.IsNullOrEmpty(version))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"Missing parameters\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_missing_param"))));
                         return true;
                     }
 
                     string gHome = GetGradleHome();
                     if (string.IsNullOrEmpty(gHome))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"未在宿主系统中检测到有效的 Gradle 缓存根目录\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_no_root"))));
                         return true;
                     }
 
@@ -846,7 +871,7 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
                     }
                     else
                     {
-                        HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"未找到该依赖库版本目录\"}");
+                        HttpServer.ServeJson(response, 404, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_dep_not_found"))));
                     }
                     return true;
                 }

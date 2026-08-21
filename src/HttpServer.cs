@@ -41,11 +41,11 @@ namespace LocalDiskServer
 
                 if (listener.Prefixes.Count == 0)
                 {
-                    throw new Exception("无法绑定到任何 HTTP 监听前缀，请检查端口是否被占用或是否有权限。");
+                    throw new Exception(I18nManager.T("err_http_bind_fail"));
                 }
 
                 listener.Start();
-                Logger.Log("HTTP 极速通道启动成功，端口: " + port);
+                Logger.Log(I18nManager.T("log_http_started", port));
 
                 serverThread = new Thread(ServerLoop);
                 serverThread.IsBackground = true;
@@ -73,7 +73,7 @@ namespace LocalDiskServer
                         if (httpsListener.Prefixes.Count > 0)
                         {
                             httpsListener.Start();
-                            Logger.Log("HTTPS 安全沙箱启动成功，端口: " + httpsPort);
+                            Logger.Log(I18nManager.T("log_https_started", httpsPort));
 
                             httpsServerThread = new Thread(HttpsServerLoop);
                             httpsServerThread.IsBackground = true;
@@ -83,7 +83,7 @@ namespace LocalDiskServer
                     }
                     catch (Exception ex)
                     {
-                        Logger.Log("HTTPS 安全沙箱启动失败: " + ex.Message);
+                        Logger.Log(I18nManager.T("log_https_start_failed", ex.Message));
                         MessageBox.Show(I18nManager.T("dialog_https_start_fail", ex.Message), I18nManager.T("dialog_warning"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     }
                 }
@@ -99,7 +99,7 @@ namespace LocalDiskServer
                 string balloonMsg = I18nManager.T("tray_balloon_content", port);
                 if (httpsStarted)
                 {
-                    balloonMsg = string.Format("HTTP: {0} | HTTPS: {1}\n" + I18nManager.T("tray_balloon_content", port).Replace(string.Format("HTTP 端口: {0}\n", port), "").Replace(string.Format("HTTP Port: {0}\n", port), ""), port, httpsPort);
+                    balloonMsg = string.Format("HTTP: {0} | HTTPS: {1}\n{2}", port, httpsPort, I18nManager.T("tray_balloon_content", port));
                 }
                 ServerApplicationContext.trayIcon.ShowBalloonTip(3000, I18nManager.T("tray_balloon_title"), balloonMsg, ToolTipIcon.Info);
             }
@@ -195,7 +195,7 @@ namespace LocalDiskServer
                 string rawPath = Uri.UnescapeDataString(request.Url.LocalPath).Trim('/');
                 if (!rawPath.Equals("api/logs", StringComparison.OrdinalIgnoreCase))
                 {
-                    Logger.Log(string.Format("收到请求 {0} {1} 来自 {2}", request.HttpMethod, request.RawUrl, request.RemoteEndPoint));
+                    Logger.Log(I18nManager.T("log_request_received", request.HttpMethod, request.RawUrl, request.RemoteEndPoint));
                 }
                 
                 if (rawPath.Equals("favicon.ico", StringComparison.OrdinalIgnoreCase))
@@ -261,17 +261,17 @@ namespace LocalDiskServer
                     }
                     else
                     {
-                        ServeError(response, 404, "路径不存在: " + physicalPath);
+                        ServeError(response, 404, I18nManager.T("err_not_found", physicalPath));
                     }
                 }
                 else
                 {
-                    ServeError(response, 400, "无效的盘符路径");
+                    ServeError(response, 400, I18nManager.T("err_invalid_drive"));
                 }
             }
             catch (Exception ex)
             {
-                ServeError(response, 500, "内部服务器错误: " + ex.Message);
+                ServeError(response, 500, I18nManager.T("err_internal", ex.Message));
             }
         }
 
@@ -293,7 +293,7 @@ namespace LocalDiskServer
                 if (GradleExplorer.HandleApi(rawPath, request, response)) return;
                 if (FileExplorer.HandleApi(rawPath, request, response)) return;
 
-                ServeError(response, 404, "接口未找到: " + rawPath);
+                ServeError(response, 404, I18nManager.T("err_api_not_found", rawPath));
             }
             catch (Exception ex)
             {
@@ -324,12 +324,12 @@ namespace LocalDiskServer
             {
                 response.StatusCode = statusCode;
                 StringBuilder sb = new StringBuilder();
-                sb.Append(GetHtmlHeader("错误 - " + statusCode, ""));
+                sb.Append(GetHtmlHeader("Error - " + statusCode, ""));
                 sb.AppendFormat("<div style='text-align:center; padding: 50px 20px;'>" +
                                 "  <h1 style='font-size: 4rem; color: #e74c3c; margin: 0;'>{0}</h1>" +
                                 "  <p style='font-size: 1.2rem; color: #7f8c8d;'>{1}</p>" +
-                                "  <a href='/' style='display:inline-block; margin-top:20px; padding:10px 20px; background:#3498db; color:white; border-radius:4px; text-decoration:none;'>返回首页</a>" +
-                                "</div>", statusCode, WebUtility.HtmlEncode(message));
+                                "  <a href='/' style='display:inline-block; margin-top:20px; padding:10px 20px; background:#3498db; color:white; border-radius:4px; text-decoration:none;'>{2}</a>" +
+                                "</div>", statusCode, WebUtility.HtmlEncode(message), I18nManager.T("err_back_home"));
                 sb.Append(GetHtmlFooter());
 
                 byte[] buffer = Encoding.UTF8.GetBytes(sb.ToString());
@@ -386,6 +386,7 @@ namespace LocalDiskServer
             html = html.Replace("{HTTPS_PORT}", ServerApplicationContext.https_port.ToString());
             html = html.Replace("{USE_HTTPS}", ServerApplicationContext.use_https.ToString().ToLower());
             html = html.Replace("{VERSION_HASH}", versionHash);
+            html = html.Replace("{I18N_JSON}", I18nManager.GetCurrentStringsJson());
             return html;
         }
 
@@ -408,6 +409,11 @@ namespace LocalDiskServer
             
             string footerHtml = html.Replace("{SHELLS_JSON}", shellsJson);
             footerHtml = footerHtml.Replace("{VERSION_HASH}", versionHash);
+            footerHtml = footerHtml.Replace("{MODAL_PROPERTIES_TITLE}", I18nManager.T("modal_properties_title"));
+            footerHtml = footerHtml.Replace("{MODAL_BTN_OK}", I18nManager.T("modal_btn_ok"));
+            footerHtml = footerHtml.Replace("{MENU_VIEW_LOGS}", I18nManager.T("menu_view_logs"));
+            footerHtml = footerHtml.Replace("{MODAL_LOGS_TITLE}", I18nManager.T("modal_logs_title"));
+            footerHtml = footerHtml.Replace("{MODAL_LOGS_BTN_CLEAR}", I18nManager.T("modal_logs_btn_clear"));
             return footerHtml;
         }
 
@@ -547,31 +553,59 @@ namespace LocalDiskServer
         public static string GetUserSvg()
         { return @"<svg class='file-icon' width='36' height='36' viewBox='0 0 24 24' fill='none' stroke='#9b59b6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'></path><circle cx='12' cy='7' r='4'></circle></svg>"; }
 
+        public static string GetPicturesSvg()
+        { return @"<svg class='file-icon' width='36' height='36' viewBox='0 0 24 24' fill='none' stroke='#e91e63' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='18' height='18' rx='2' ry='2'></rect><circle cx='8.5' cy='8.5' r='1.5'></circle><polyline points='21 15 16 10 5 21'></polyline></svg>"; }
+
+        public static string GetMusicSvg()
+        { return @"<svg class='file-icon' width='36' height='36' viewBox='0 0 24 24' fill='none' stroke='#00bcd4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 18V5l12-2v13'></path><circle cx='6' cy='18' r='3'></circle><circle cx='18' cy='16' r='3'></circle></svg>"; }
+
+        public static string GetVideosSvg()
+        { return @"<svg class='file-icon' width='36' height='36' viewBox='0 0 24 24' fill='none' stroke='#ff5722' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polygon points='23 7 16 12 23 17 23 7'></polygon><rect x='1' y='5' width='15' height='14' rx='2' ry='2'></rect></svg>"; }
+
+        public static string GetTempSvg()
+        { return @"<svg class='file-icon' width='36' height='36' viewBox='0 0 24 24' fill='none' stroke='#f39c12' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polygon points='13 2 3 14 12 14 11 22 21 10 12 10 13 2'></polygon></svg>"; }
+
+        public static string GetQuickAccessSvg(string key)
+        {
+            switch (key)
+            {
+                case "desktop": return GetMonitorSvg();
+                case "downloads": return GetDownloadSvg();
+                case "documents": return GetDocumentsSvg();
+                case "pictures": return GetPicturesSvg();
+                case "music": return GetMusicSvg();
+                case "videos": return GetVideosSvg();
+                case "user_profile": return GetUserSvg();
+                case "temp": return GetTempSvg();
+                default: return GetFolderSvg();
+            }
+        }
+
         // Action menu handlers
     
         public static void ServeDriveList(HttpListenerResponse response)
         {
             StringBuilder sb = new StringBuilder();
-            sb.Append(HttpServer.GetHtmlHeader("本地计算机 - 导航主页", ""));
+            sb.Append(HttpServer.GetHtmlHeader(I18nManager.T("lobby_title"), ""));
 
             // Unified compact toolbar for navigation home
             sb.Append("<div class='toolbar'>");
             sb.Append("  <div class='toolbar-left'>");
             sb.Append("    <div class='address-bar-wrapper' onmousedown='activateAddressInput(event)'>");
             sb.Append("      <div class='breadcrumbs' id='breadcrumbs-bar'>");
-            sb.Append("        <span>🏠 本地计算机导航主页</span>");
+            sb.AppendFormat("        <span>🏠 {0}</span>", I18nManager.T("lobby_header_title"));
             sb.Append("      </div>");
             sb.Append("      <input type='text' id='address-input' style='display: none;' onkeydown='handleAddressKey(event)' onblur='deactivateAddressInput()'>");
             sb.Append("    </div>");
-            sb.Append("    <button id='protocol-switch-btn' onclick='toggleProtocol(event)' class='btn-back' style='height: 32px; padding: 0 10px; margin-left: 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px; flex-shrink: 0;' title='一键切换 HTTP / HTTPS 安全沙箱协议'></button>");
+            sb.AppendFormat("    <button id='protocol-switch-btn' onclick='toggleProtocol(event)' class='btn-back' style='height: 32px; padding: 0 10px; margin-left: 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px; flex-shrink: 0;' title='{0}'></button>", I18nManager.T("lobby_proto_toggle_title"));
             sb.Append("  </div>");
             sb.Append("  <div class='toolbar-right' style='display: flex; align-items: center; gap: 8px;'>");
             sb.Append("    <select id='view-select' onchange='setViewMode(this.value)' style='height: 32px; background: var(--container-bg); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 8px; cursor: pointer; outline: none; font-size: 0.85rem;'>");
-            sb.Append("      <option value='details'>📋 详细信息</option>");
-            sb.Append("      <option value='large'>🔲 大图标</option>");
-            sb.Append("      <option value='medium'>⚃ 中等图标</option>");
+            sb.AppendFormat("      <option value='details'>{0}</option>", I18nManager.T("lobby_view_details"));
+            sb.AppendFormat("      <option value='large'>{0}</option>", I18nManager.T("lobby_view_large"));
+            sb.AppendFormat("      <option value='medium'>{0}</option>", I18nManager.T("lobby_view_medium"));
             sb.Append("    </select>");
-            sb.Append("    <input type='text' id='search' placeholder='🔎 快速筛选卡片...' oninput='filterCards()'>");
+            sb.AppendFormat("    <input type='text' id='search' placeholder='{0}' oninput='filterCards()'>", I18nManager.T("lobby_search_placeholder"));
             sb.Append("  </div>");
             sb.Append("</div>");
 
@@ -579,7 +613,7 @@ namespace LocalDiskServer
             var favList = FileExplorer.GetFavorites();
             if (favList.Count > 0)
             {
-                sb.Append("<h2>⭐ 我的收藏夹</h2>");
+                sb.AppendFormat("<h2>⭐ {0}</h2>", I18nManager.T("lobby_favorites_title"));
                 sb.Append("<div class='grid'>");
                 foreach (string fav in favList)
                 {
@@ -591,7 +625,7 @@ namespace LocalDiskServer
                         string icon = isDir ? HttpServer.GetFolderSvg() : HttpServer.GetFileIconSvg(ext);
                         string name = Path.GetFileName(fav);
                         if (string.IsNullOrEmpty(name)) name = fav; // E.g., drive root
-                        string desc = isDir ? "已收藏目录" : "已收藏文件";
+                        string desc = isDir ? I18nManager.T("lobby_fav_folder") : I18nManager.T("lobby_fav_file");
                         string htmlEscapedPath = fav.Replace("'", "&#39;").Replace("\"", "&quot;");
                         sb.AppendFormat(
                             "<a href='{0}' class='card drive-card fav-card' data-path='{1}' data-type='{2}' data-favorite='true' style='position:relative;'>" +
@@ -610,85 +644,42 @@ namespace LocalDiskServer
             }
 
             // Section 1: Quick Access Shortcuts
-            sb.Append("<h2>🚀 常用快速访问</h2>");
+            sb.AppendFormat("<h2>🚀 {0}</h2>", I18nManager.T("quick_access_title"));
             sb.Append("<div class='grid'>");
 
-            // 1. Desktop
-            string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-            if (Directory.Exists(desktopPath))
+            var quickList = FileExplorer.GetStandardQuickAccessItems();
+            foreach (var q in quickList)
             {
+                string iconSvg = HttpServer.GetQuickAccessSvg(q.Key);
+                string htmlEscapedPath = q.PhysicalPath.Replace("'", "&#39;").Replace("\"", "&quot;");
                 sb.AppendFormat(
                     "<a href='{0}' class='card drive-card' data-path='{1}' data-type='dir'>" +
                     "  <div class='icon-wrapper'>{2}</div>" +
                     "  <div class='card-info'>" +
-                    "    <div class='title'>桌面 (Desktop)</div>" +
-                    "    <div class='desc'>快速访问当前系统用户的桌面</div>" +
+                    "    <div class='title'>{3}</div>" +
+                    "    <div class='desc'>{4}</div>" +
                     "  </div>" +
                     "</a>",
-                    HttpServer.PhysicalToWebPath(desktopPath), desktopPath.Replace("'", "&#39;").Replace("\"", "&quot;"), HttpServer.GetMonitorSvg());
-            }
-
-            // 2. Documents
-            string docsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            if (Directory.Exists(docsPath))
-            {
-                sb.AppendFormat(
-                    "<a href='{0}' class='card drive-card' data-path='{1}' data-type='dir'>" +
-                    "  <div class='icon-wrapper'>{2}</div>" +
-                    "  <div class='card-info'>" +
-                    "    <div class='title'>我的文档 (Documents)</div>" +
-                    "    <div class='desc'>管理个人文档与软件数据文件</div>" +
-                    "  </div>" +
-                    "</a>",
-                    HttpServer.PhysicalToWebPath(docsPath), docsPath.Replace("'", "&#39;").Replace("\"", "&quot;"), HttpServer.GetDocumentsSvg());
-            }
-
-            // 3. Downloads
-            string downloadsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
-            if (Directory.Exists(downloadsPath))
-            {
-                sb.AppendFormat(
-                    "<a href='{0}' class='card drive-card' data-path='{1}' data-type='dir'>" +
-                    "  <div class='icon-wrapper'>{2}</div>" +
-                    "  <div class='card-info'>" +
-                    "    <div class='title'>下载 (Downloads)</div>" +
-                    "    <div class='desc'>查看浏览器与常用软件下载的文件</div>" +
-                    "  </div>" +
-                    "</a>",
-                    HttpServer.PhysicalToWebPath(downloadsPath), downloadsPath.Replace("'", "&#39;").Replace("\"", "&quot;"), HttpServer.GetDownloadSvg());
-            }
-
-            // 4. User profile
-            string userPath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (Directory.Exists(userPath))
-            {
-                sb.AppendFormat(
-                    "<a href='{0}' class='card drive-card' data-path='{1}' data-type='dir'>" +
-                    "  <div class='icon-wrapper'>{2}</div>" +
-                    "  <div class='card-info'>" +
-                    "    <div class='title'>用户主目录 (User Profile)</div>" +
-                    "    <div class='desc'>管理当前用户的主配置文件夹</div>" +
-                    "  </div>" +
-                    "</a>",
-                    HttpServer.PhysicalToWebPath(userPath), userPath.Replace("'", "&#39;").Replace("\"", "&quot;"), HttpServer.GetUserSvg());
+                    q.WebPath, htmlEscapedPath, iconSvg, q.Title, q.Description);
             }
 
             // 5. Gradle Dependency Browser Entry on Lobby
-             sb.Append(
+             sb.AppendFormat(
                  "<a href='/?view=gradle' class='card drive-card' data-path='/?view=gradle' data-type='dir'>" +
                  "  <div class='icon-wrapper' style='font-size: 2rem; display: flex; align-items: center; justify-content: center;'>☕</div>" +
                  "  <div class='card-info'>" +
-                 "    <div class='title'>Gradle 依赖管理</div>" +
-                 "    <div class='desc'>极速扫描、模糊搜索并级联分析 KMP &amp; POM 依赖缓存</div>" +
+                 "    <div class='title'>{0}</div>" +
+                 "    <div class='desc'>{1}</div>" +
                  "  </div>" +
-                 "</a>"
+                 "</a>",
+                 I18nManager.T("lobby_gradle_title"), I18nManager.T("lobby_gradle_desc")
              );
 
             sb.Append("</div>");
             sb.Append("<hr style='border: 0; border-top: 1px solid var(--border-color); margin: 12px 0;'>");
 
             // Section 2: Physical Drives
-            sb.Append("<h2>💾 本地计算机磁盘分区</h2>");
+            sb.AppendFormat("<h2>💾 {0}</h2>", I18nManager.T("lobby_drives_title"));
             sb.Append("<div class='grid'>");
 
             DriveInfo[] drives = DriveInfo.GetDrives();
@@ -697,20 +688,21 @@ namespace LocalDiskServer
                 if (drive.IsReady)
                 {
                     string dLetter = drive.Name.Substring(0, 1).ToLower();
-                    string sizeInfo = string.Format("可用: {0} GB / 共 {1} GB", 
+                    string sizeInfo = I18nManager.T("lobby_drive_space", 
                         drive.AvailableFreeSpace / 1024 / 1024 / 1024, 
                         drive.TotalSize / 1024 / 1024 / 1024);
                     string htmlEscapedDrivePath = drive.Name.Replace("'", "&#39;").Replace("\"", "&quot;");
+                    string driveName = I18nManager.T("lobby_drive_name", drive.Name.Substring(0, 1).ToUpper());
 
                     sb.AppendFormat(
                         "<a href='/{0}/' class='card drive-card' data-path='{1}' data-type='dir' data-drive='true'>" +
                         "  <div class='icon-wrapper'>{2}</div>" +
                         "  <div class='card-info'>" +
-                        "    <div class='title'>本地磁盘 ({3}:)</div>" +
+                        "    <div class='title'>{3}</div>" +
                         "    <div class='desc'>{4}</div>" +
                         "  </div>" +
                         "</a>",
-                        dLetter, htmlEscapedDrivePath, HttpServer.GetDriveSvg(), drive.Name.Substring(0, 1), sizeInfo);
+                        dLetter, htmlEscapedDrivePath, HttpServer.GetDriveSvg(), driveName, sizeInfo);
                 }
             }
             sb.Append("</div>");

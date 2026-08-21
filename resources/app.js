@@ -1,17 +1,374 @@
 // availableShells is injected globally in footer.html
-function filterList() {
-    var input = document.getElementById('search');
-    var filter = input.value.toLowerCase();
-    var rows = document.getElementsByClassName('item-row');
-    
-    for (var i = 0; i < rows.length; i++) {
-        var name = rows[i].getAttribute('data-name');
-        if (name.indexOf(filter) > -1) {
-            rows[i].style.display = '';
-        } else {
-            rows[i].style.display = 'none';
+if (typeof window.t !== 'function') {
+    window.t = function(key, ...args) {
+        let str = (window.I18N_DICT && window.I18N_DICT[key]) || key;
+        if (args.length > 0) {
+            args.forEach((val, idx) => {
+                str = str.replace(new RegExp('\\{' + idx + '\\}', 'g'), val);
+            });
+        }
+        return str;
+    };
+}
+
+// Table Column Sorting State
+let currentSortCol = null;
+let currentSortDir = 'none'; // 'asc' | 'desc' | 'none'
+
+// Progressive Incremental Rendering & Status Bar State
+let allDataSourceRows = [];
+let renderedRowCount = 0;
+const BATCH_SIZE = 100;
+let isIncrementalRenderActive = false;
+
+function initIncrementalRender() {
+    const table = document.getElementById('file-table');
+    if (!table) {
+        updateStatusBar();
+        return;
+    }
+    const tbody = table.querySelector('tbody');
+    if (!tbody) {
+        updateStatusBar();
+        return;
+    }
+
+    allDataSourceRows = Array.from(tbody.querySelectorAll('tr.item-row'));
+    if (allDataSourceRows.length === 0) {
+        updateStatusBar();
+        return;
+    }
+
+    // 当列表条目较多时启用动态分批渲染
+    if (allDataSourceRows.length > BATCH_SIZE) {
+        isIncrementalRenderActive = true;
+        tbody.innerHTML = '';
+        renderedRowCount = 0;
+        appendNextBatch(BATCH_SIZE);
+
+        const scrollArea = document.querySelector('.explorer-scroll-area');
+        if (scrollArea) {
+            scrollArea.addEventListener('scroll', () => {
+                if (!isIncrementalRenderActive) return;
+                const scrollBottom = scrollArea.scrollHeight - scrollArea.scrollTop - scrollArea.clientHeight;
+                if (scrollBottom < 300) {
+                    appendNextBatch(BATCH_SIZE);
+                }
+            });
         }
     }
+
+    updateStatusBar();
+}
+
+function appendNextBatch(count) {
+    const table = document.getElementById('file-table');
+    if (!table) return;
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+
+    const searchInput = document.getElementById('search');
+    const filter = searchInput ? searchInput.value.toLowerCase().trim() : '';
+
+    const currentList = filter
+        ? allDataSourceRows.filter(r => (r.getAttribute('data-name') || '').indexOf(filter) > -1)
+        : allDataSourceRows;
+
+    if (renderedRowCount >= currentList.length) return;
+
+    const frag = document.createDocumentFragment();
+    const nextLimit = Math.min(renderedRowCount + count, currentList.length);
+
+    for (let i = renderedRowCount; i < nextLimit; i++) {
+        frag.appendChild(currentList[i]);
+    }
+
+    tbody.appendChild(frag);
+    renderedRowCount = nextLimit;
+}
+
+function handleHeaderSort(colKey) {
+    const table = document.getElementById('file-table');
+    if (!table) return;
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+
+    // Toggle sort direction: none -> asc -> desc -> none
+    if (currentSortCol === colKey) {
+        if (currentSortDir === 'asc') {
+            currentSortDir = 'desc';
+        } else if (currentSortDir === 'desc') {
+            currentSortDir = 'none';
+            currentSortCol = null;
+        } else {
+            currentSortDir = 'asc';
+        }
+    } else {
+        currentSortCol = colKey;
+        currentSortDir = 'asc';
+    }
+
+    const rows = (allDataSourceRows && allDataSourceRows.length > 0)
+        ? allDataSourceRows
+        : Array.from(tbody.querySelectorAll('tr.item-row'));
+
+    if (rows.length === 0) return;
+
+    if (currentSortDir === 'none') {
+        // Reset to default original order
+        rows.sort((a, b) => {
+            const idxA = parseInt(a.getAttribute('data-original-index') || '0', 10);
+            const idxB = parseInt(b.getAttribute('data-original-index') || '0', 10);
+            return idxA - idxB;
+        });
+    } else {
+        const mult = currentSortDir === 'asc' ? 1 : -1;
+        const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+        rows.sort((a, b) => {
+            const typeA = a.getAttribute('data-type') || 'file';
+            const typeB = b.getAttribute('data-type') || 'file';
+
+            // Always keep directories above files (Windows Explorer style)
+            if (typeA !== typeB) {
+                return typeA === 'dir' ? -1 : 1;
+            }
+
+            if (colKey === 'name') {
+                const nameA = (a.querySelector('.name-text')?.innerText || a.getAttribute('data-name') || '').trim();
+                const nameB = (b.querySelector('.name-text')?.innerText || b.getAttribute('data-name') || '').trim();
+                return mult * collator.compare(nameA, nameB);
+            } else if (colKey === 'type') {
+                const descA = (a.getAttribute('data-type-desc') || '').trim();
+                const descB = (b.getAttribute('data-type-desc') || '').trim();
+                return mult * collator.compare(descA, descB);
+            } else if (colKey === 'time') {
+                const timeA = parseFloat(a.getAttribute('data-time') || '0');
+                const timeB = parseFloat(b.getAttribute('data-time') || '0');
+                return mult * (timeA - timeB);
+            } else if (colKey === 'size') {
+                const sizeA = parseFloat(a.getAttribute('data-size') || '0');
+                const sizeB = parseFloat(b.getAttribute('data-size') || '0');
+                return mult * (sizeA - sizeB);
+            } else if (colKey === 'favorite') {
+                const favA = a.getAttribute('data-favorite') === 'true' ? 1 : 0;
+                const favB = b.getAttribute('data-favorite') === 'true' ? 1 : 0;
+                return mult * (favA - favB);
+            }
+            return 0;
+        });
+    }
+
+    if (isIncrementalRenderActive) {
+        tbody.innerHTML = '';
+        renderedRowCount = 0;
+        appendNextBatch(BATCH_SIZE);
+    } else {
+        rows.forEach(r => tbody.appendChild(r));
+    }
+
+    // Update Header Indicators
+    const headers = table.querySelectorAll('th.col-sortable');
+    headers.forEach(th => {
+        const arrow = th.querySelector('.sort-arrow');
+        const col = th.getAttribute('data-col');
+        if (col === currentSortCol && currentSortDir !== 'none') {
+            if (arrow) arrow.textContent = currentSortDir === 'asc' ? '▲' : '▼';
+            th.style.color = 'var(--accent-hover)';
+        } else {
+            if (arrow) arrow.textContent = '';
+            th.style.color = '';
+        }
+    });
+
+    updateStatusBar();
+}
+
+// Reset sorting to default programmatically
+function resetTableSort() {
+    currentSortCol = null;
+    currentSortDir = 'none';
+    const table = document.getElementById('file-table');
+    if (!table) return;
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+
+    const rows = (allDataSourceRows && allDataSourceRows.length > 0)
+        ? allDataSourceRows
+        : Array.from(tbody.querySelectorAll('tr.item-row'));
+
+    rows.sort((a, b) => {
+        const idxA = parseInt(a.getAttribute('data-original-index') || '0', 10);
+        const idxB = parseInt(b.getAttribute('data-original-index') || '0', 10);
+        return idxA - idxB;
+    });
+
+    if (isIncrementalRenderActive) {
+        tbody.innerHTML = '';
+        renderedRowCount = 0;
+        appendNextBatch(BATCH_SIZE);
+    } else {
+        rows.forEach(r => tbody.appendChild(r));
+    }
+
+    const headers = table.querySelectorAll('th.col-sortable');
+    headers.forEach(th => {
+        const arrow = th.querySelector('.sort-arrow');
+        if (arrow) arrow.textContent = '';
+        th.style.color = '';
+    });
+
+    updateStatusBar();
+}
+
+// Table Column Resizing Logic: Adjacent Column Pair Only, Zero Interference to Other Columns
+let isColResizing = false;
+let currentLeftTh = null;
+let currentRightTh = null;
+let startResizeX = 0;
+let startLeftWidth = 0;
+let startRightWidth = 0;
+let minLeftWidth = 40;
+let minRightWidth = 40;
+let totalPairWidth = 0;
+let resizeRafId = null;
+
+function getThMinWidth(th) {
+    if (!th) return 40;
+    const labelEl = th.querySelector('.th-label');
+    const labelWidth = labelEl ? Math.ceil(labelEl.getBoundingClientRect().width) : 26;
+    const arrowEl = th.querySelector('.sort-arrow');
+    const arrowWidth = arrowEl ? Math.ceil(arrowEl.getBoundingClientRect().width || 12) : 12;
+    // th 内边距 (左右各 8px = 16px) + 手柄与排序箭头间距余量 (8px)
+    return Math.max(45, labelWidth + arrowWidth + 20);
+}
+
+function initColResize(e, handle) {
+    if (e.button !== 0) return; // 仅限鼠标左键拖拽
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const leftTh = handle.parentElement;
+    const rightTh = leftTh ? leftTh.nextElementSibling : null;
+    if (!leftTh || !rightTh) return; // 最后一列右侧无相邻列，不进行调节
+
+    isColResizing = true;
+    currentLeftTh = leftTh;
+    currentRightTh = rightTh;
+    startResizeX = e.pageX;
+    
+    // 获取当前相邻两列的精确物理像素宽度
+    startLeftWidth = currentLeftTh.getBoundingClientRect().width;
+    startRightWidth = currentRightTh.getBoundingClientRect().width;
+    totalPairWidth = startLeftWidth + startRightWidth;
+
+    // 分别计算左列与右列的最小安全宽度（以表头文字为基准防截断）
+    minLeftWidth = getThMinWidth(currentLeftTh);
+    minRightWidth = getThMinWidth(currentRightTh);
+
+    handle.classList.add('resizing');
+    document.body.classList.add('resizing-col');
+
+    function onMouseMove(moveEvent) {
+        if (!isColResizing || !currentLeftTh || !currentRightTh) return;
+        const diff = moveEvent.pageX - startResizeX;
+        
+        // 仅在当前相邻两列之间分配宽度，左列 + diff，右列相应 - diff
+        let newLeftWidth = startLeftWidth + diff;
+        if (newLeftWidth < minLeftWidth) {
+            newLeftWidth = minLeftWidth;
+        } else if (newLeftWidth > totalPairWidth - minRightWidth) {
+            newLeftWidth = totalPairWidth - minRightWidth;
+        }
+        
+        const newRightWidth = totalPairWidth - newLeftWidth;
+
+        if (resizeRafId) cancelAnimationFrame(resizeRafId);
+        resizeRafId = requestAnimationFrame(() => {
+            if (currentLeftTh && currentRightTh) {
+                // 仅更新被该分隔符分割的相邻两列，其它所有列纹丝不动
+                currentLeftTh.style.width = newLeftWidth + 'px';
+                currentRightTh.style.width = newRightWidth + 'px';
+            }
+        });
+    }
+
+    function onMouseUp() {
+        if (isColResizing) {
+            isColResizing = false;
+            if (resizeRafId) cancelAnimationFrame(resizeRafId);
+            handle.classList.remove('resizing');
+            document.body.classList.remove('resizing-col');
+            saveColumnWidths();
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+        }
+    }
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+}
+
+function saveColumnWidths() {
+    const table = document.getElementById('file-table');
+    if (!table) return;
+    const ths = table.querySelectorAll('thead th[data-col]');
+    const widths = {};
+    ths.forEach(th => {
+        const col = th.getAttribute('data-col');
+        if (col && th.style.width) {
+            widths[col] = th.style.width;
+        }
+    });
+    try {
+        localStorage.setItem('lds_col_widths', JSON.stringify(widths));
+    } catch(e) {}
+}
+
+function restoreColumnWidths() {
+    try {
+        const saved = localStorage.getItem('lds_col_widths');
+        if (!saved) return;
+        const widths = JSON.parse(saved);
+        const table = document.getElementById('file-table');
+        if (!table) return;
+        const ths = table.querySelectorAll('thead th[data-col]');
+        ths.forEach(th => {
+            const col = th.getAttribute('data-col');
+            if (col && widths[col]) {
+                th.style.width = widths[col];
+            }
+        });
+    } catch(e) {}
+}
+
+function filterList() {
+    var input = document.getElementById('search');
+    var filter = input.value.toLowerCase().trim();
+    
+    if (isIncrementalRenderActive) {
+        const table = document.getElementById('file-table');
+        if (table) {
+            const tbody = table.querySelector('tbody');
+            if (tbody) {
+                tbody.innerHTML = '';
+                renderedRowCount = 0;
+                appendNextBatch(BATCH_SIZE);
+            }
+        }
+    } else {
+        var rows = document.getElementsByClassName('item-row');
+        for (var i = 0; i < rows.length; i++) {
+            var name = rows[i].getAttribute('data-name');
+            if (name.indexOf(filter) > -1) {
+                rows[i].style.display = '';
+            } else {
+                rows[i].style.display = 'none';
+            }
+        }
+    }
+
+    updateStatusBar();
 }
 
 function filterCards() {
@@ -90,6 +447,86 @@ function initCollapsibleSidebars() {
     }
 }
 
+function formatStatusFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    if (bytes < 0 || isNaN(bytes)) return '-';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
+}
+
+function updateStatusBar() {
+    const statusLeft = document.getElementById('status-left');
+    const statusRight = document.getElementById('status-right');
+    if (!statusLeft && !statusRight) return;
+
+    const countElem = document.getElementById('status-count');
+    const detailElem = document.getElementById('status-detail');
+    const selectedElem = document.getElementById('status-selected');
+
+    const i18n = window.I18N_STATUS || {
+        totalItems: t('status_total_items', '{0}'),
+        totalDetail: t('status_total_detail', '{0}', '{1}', '{2}'),
+        selectedItems: t('status_selected_items', '{0}', '{1}'),
+        noSelection: t('status_no_selection')
+    };
+
+    let totalItems = 0;
+    let dirCount = 0;
+    let fileCount = 0;
+    let totalSizeBytes = 0;
+
+    const rows = (allDataSourceRows && allDataSourceRows.length > 0)
+        ? allDataSourceRows
+        : Array.from(document.querySelectorAll('#file-table tbody tr.item-row'));
+
+    const searchInput = document.getElementById('search');
+    const filter = searchInput ? searchInput.value.toLowerCase().trim() : '';
+
+    rows.forEach(r => {
+        if (filter) {
+            const name = (r.getAttribute('data-name') || '').toLowerCase();
+            if (name.indexOf(filter) === -1) return;
+        }
+        totalItems++;
+        const type = r.getAttribute('data-type');
+        if (type === 'dir' || type === 'directory') {
+            dirCount++;
+        } else {
+            fileCount++;
+            const sz = parseFloat(r.getAttribute('data-size') || '0');
+            if (sz > 0) totalSizeBytes += sz;
+        }
+    });
+
+    if (countElem) {
+        countElem.textContent = i18n.totalItems.replace('{0}', totalItems);
+    }
+    if (detailElem) {
+        detailElem.textContent = i18n.totalDetail
+            .replace('{0}', dirCount)
+            .replace('{1}', fileCount)
+            .replace('{2}', formatStatusFileSize(totalSizeBytes));
+    }
+
+    if (selectedElem) {
+        const selCount = selectedRows.size;
+        if (selCount === 0) {
+            selectedElem.textContent = i18n.noSelection;
+        } else {
+            let selSizeBytes = 0;
+            selectedRows.forEach(row => {
+                const sz = parseFloat(row.getAttribute('data-size') || '0');
+                if (sz > 0) selSizeBytes += sz;
+            });
+            selectedElem.textContent = i18n.selectedItems
+                .replace('{0}', selCount)
+                .replace('{1}', formatStatusFileSize(selSizeBytes));
+        }
+    }
+}
+
 let lastSelected = null;
 let selectedRows = new Set();
 let contextMenu = null;
@@ -97,6 +534,7 @@ let contextMenu = null;
 document.addEventListener('DOMContentLoaded', () => {
     initCollapsibleSidebars();
     initProtocolSwitcher();
+    restoreColumnWidths();
     
     if (typeof currentView !== 'undefined' && currentView === 'gradle') {
         initGradleDashboard();
@@ -104,6 +542,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     initSelection();
+    initIncrementalRender();
     initDragSelect();
     initContextMenu();
     initShortcuts();
@@ -130,39 +569,33 @@ function getSelectableItems() {
 }
 
 function initSelection() {
-    const selectables = getSelectableItems();
-    selectables.forEach(item => {
-        item.addEventListener('dragstart', (e) => e.preventDefault());
-        
-        const isCard = item.classList.contains('drive-card') || item.classList.contains('fav-card') || item.classList.contains('card');
-        
-        item.addEventListener('click', (e) => {
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
-            if (e.target.closest('.fav-star-btn')) return;
-            
-            if (isCard) {
-                // 💡 For lobby cards, single-click directly opens/navigates them!
-                return;
+    // 使用全局事件委托支持动态流式加载的行
+    document.addEventListener('click', (e) => {
+        const item = e.target.closest('.item-row, .drive-card, .fav-card');
+        if (!item) {
+            if (!e.target.closest('.context-menu, .toolbar, .explorer-statusbar')) {
+                clearAllSelections();
             }
-            
-            e.preventDefault();
-            e.stopPropagation();
-            
-            handleItemSelection(item, e.ctrlKey, e.shiftKey);
-        });
+            return;
+        }
 
-        item.addEventListener('dblclick', (e) => {
-            if (isCard) return;
-            const link = item.querySelector('a');
-            if (link) {
-                window.location.href = link.href;
-            }
-        });
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+        if (e.target.closest('.fav-star-btn')) return;
+
+        const isCard = item.classList.contains('drive-card') || item.classList.contains('fav-card') || item.classList.contains('card');
+        if (isCard) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+        handleItemSelection(item, e.ctrlKey, e.shiftKey);
     });
 
-    document.addEventListener('click', (e) => {
-        if (!e.target.closest('.item-row, .drive-card, .fav-card, .context-menu')) {
-            clearAllSelections();
+    document.addEventListener('dblclick', (e) => {
+        const item = e.target.closest('.item-row');
+        if (!item) return;
+        const link = item.querySelector('a');
+        if (link) {
+            window.location.href = link.href;
         }
     });
 }
@@ -197,12 +630,14 @@ function selectRow(item) {
     item.classList.add('selected');
     selectedRows.add(item);
     if (typeof updateLivePreview === 'function') updateLivePreview();
+    updateStatusBar();
 }
 
 function deselectRow(item) {
     item.classList.remove('selected');
     selectedRows.delete(item);
     if (typeof updateLivePreview === 'function') updateLivePreview();
+    updateStatusBar();
 }
 
 function clearAllSelections() {
@@ -211,6 +646,7 @@ function clearAllSelections() {
     selectedRows.clear();
     lastSelected = null;
     if (typeof updateLivePreview === 'function') updateLivePreview();
+    updateStatusBar();
 }
 
 function initDragSelect() {
@@ -327,39 +763,39 @@ function renderContextMenu(clientX, clientY, onTarget) {
     const items = [];
     if (onTarget) {
         if (isDrive) {
-            items.push({ label: '📂 打开 (Enter)', action: 'open' });
-            items.push({ label: '🎛️ 属性', action: 'properties' });
+            items.push({ label: t('ctx_open'), action: 'open' });
+            items.push({ label: t('ctx_properties'), action: 'properties' });
         } else if (isLobbyCard) {
-            items.push({ label: '📂 打开 (Enter)', action: 'open' });
-            items.push({ label: '⭐ 收藏/取消收藏', action: 'favorite' });
-            items.push({ label: '🎛️ 属性', action: 'properties' });
+            items.push({ label: t('ctx_open'), action: 'open' });
+            items.push({ label: t('ctx_favorite'), action: 'favorite' });
+            items.push({ label: t('ctx_properties'), action: 'properties' });
         } else {
-            items.push({ label: '📂 打开 (Enter)', action: 'open' });
+            items.push({ label: t('ctx_open'), action: 'open' });
             
             const submenuItems = [];
             if (!isDir) {
-                submenuItems.push({ label: '🌐 浏览器文本直显', action: 'openWith_text' });
+                submenuItems.push({ label: t('ctx_open_with_text'), action: 'openWith_text' });
             }
-            submenuItems.push({ label: '💻 宿主电脑默认程序', action: 'openWith_host' });
-            submenuItems.push({ label: isDir ? '📂 网页进入目录' : '📥 标准物理下载', action: 'openWith_standard' });
+            submenuItems.push({ label: t('ctx_open_with_host'), action: 'openWith_host' });
+            submenuItems.push({ label: isDir ? t('ctx_open_with_enter') : t('ctx_open_with_download'), action: 'openWith_standard' });
 
             items.push({ 
-                label: '⚡ 打开方式', 
+                label: t('ctx_open_with'), 
                 action: 'openWith', 
                 submenu: submenuItems 
             });
 
-            items.push({ label: '⭐ 收藏/取消收藏', action: 'favorite' });
-            items.push({ label: '📝 重命名 (F2)', action: 'rename' });
-            items.push({ label: '📋 复制 (Ctrl+C)', action: 'copy' });
-            items.push({ label: '✂️ 剪切 (Ctrl+X)', action: 'cut' });
-            items.push({ label: '🗑️ 删除 (Delete)', action: 'delete', danger: true });
-            items.push({ label: '🎛️ 属性', action: 'properties' });
+            items.push({ label: t('ctx_favorite'), action: 'favorite' });
+            items.push({ label: t('ctx_rename'), action: 'rename' });
+            items.push({ label: t('ctx_copy'), action: 'copy' });
+            items.push({ label: t('ctx_cut'), action: 'cut' });
+            items.push({ label: t('ctx_delete'), action: 'delete', danger: true });
+            items.push({ label: t('ctx_properties'), action: 'properties' });
         }
     }
     const isLobby = typeof isLobbyPage !== 'undefined' && isLobbyPage;
     if (!isLobby) {
-        items.push({ label: '📥 粘贴 (Ctrl+V)', action: 'paste' });
+        items.push({ label: t('ctx_paste'), action: 'paste' });
     }
 
     const submenuShells = [];
@@ -371,7 +807,7 @@ function renderContextMenu(clientX, clientY, onTarget) {
     // Add simple other shells if available on startup, we dynamically generate elements
     if (typeof availableShells !== 'undefined') {
         availableShells.forEach((shell, index) => {
-            const labelSuffix = index === 0 ? " (系统推荐)" : "";
+            const labelSuffix = index === 0 ? t('ctx_system_recommended') : "";
             submenuShells.push({ 
                 label: "🖥️ " + shell.name + labelSuffix, 
                 action: "openTerminal_path",
@@ -380,14 +816,18 @@ function renderContextMenu(clientX, clientY, onTarget) {
         });
     }
     items.push({ 
-        label: '🖥️ 在终端中打开', 
+        label: t('ctx_open_terminal'), 
         action: 'openTerminal',
         submenu: submenuShells 
     });
 
-    items.push({ label: '🔄 刷新 (F5)', action: 'refresh' });
+    if (!onTarget && typeof currentSortDir !== 'undefined' && currentSortDir !== 'none') {
+        items.push({ label: t('ctx_reset_sort'), action: 'resetSort' });
+    }
 
-    const menuWidth = 155;
+    items.push({ label: t('ctx_refresh'), action: 'refresh' });
+
+    const menuWidth = 190;
 
     items.forEach(cfg => {
         const el = document.createElement('div');
@@ -395,7 +835,7 @@ function renderContextMenu(clientX, clientY, onTarget) {
         
         if (cfg.submenu) {
             el.className += ' has-submenu';
-            el.innerHTML = `<span>${cfg.label}</span><span style="font-size: 0.65rem; color: var(--text-muted); margin-left: 8px;">▶</span>`;
+            el.innerHTML = `<span>${cfg.label}</span><span style="font-size: 0.65rem; color: var(--text-muted); margin-left: 12px; flex-shrink: 0;">▶</span>`;
             
             const subEl = document.createElement('div');
             subEl.className = 'context-submenu';
@@ -414,9 +854,34 @@ function renderContextMenu(clientX, clientY, onTarget) {
             
             el.appendChild(subEl);
             
-            if (clientX + menuWidth + 175 > window.innerWidth) {
-                subEl.classList.add('edge-left');
-            }
+            // 鼠标悬停在含子菜单项时，动态计算并避开屏幕视口边界
+            el.addEventListener('mouseenter', () => {
+                subEl.classList.remove('edge-left', 'edge-bottom');
+                subEl.style.top = '';
+                subEl.style.bottom = '';
+
+                subEl.style.display = 'block';
+                subEl.style.visibility = 'hidden';
+                const subRect = subEl.getBoundingClientRect();
+                const parentRect = el.getBoundingClientRect();
+                subEl.style.display = '';
+                subEl.style.visibility = '';
+
+                // 水平方向视口碰撞检测 (X轴)
+                if (parentRect.right + subRect.width + 8 > window.innerWidth) {
+                    subEl.classList.add('edge-left');
+                }
+
+                // 垂直方向视口碰撞检测 (Y轴)
+                if (parentRect.top + subRect.height + 8 > window.innerHeight) {
+                    subEl.classList.add('edge-bottom');
+                    const bottomAlignedTop = parentRect.bottom - subRect.height;
+                    if (bottomAlignedTop < 8) {
+                        subEl.classList.remove('edge-bottom');
+                        subEl.style.top = (8 - parentRect.top) + 'px';
+                    }
+                }
+            });
         } else {
             el.innerText = cfg.label;
             el.addEventListener('click', () => {
@@ -427,23 +892,36 @@ function renderContextMenu(clientX, clientY, onTarget) {
         contextMenu.appendChild(el);
     });
 
+    // 预渲染以获取准确的物理尺寸，防止闪烁
+    contextMenu.style.visibility = 'hidden';
     contextMenu.style.display = 'block';
 
     const actualWidth = contextMenu.offsetWidth || menuWidth;
     const actualHeight = contextMenu.offsetHeight || 220;
+    const padding = 8;
 
-    let x = clientX;
-    let y = clientY;
+    let x = clientX + 2;
+    let y = clientY + 2;
 
-    if (x + actualWidth > window.innerWidth) {
-        x = window.innerWidth - actualWidth - 5;
+    // X 轴智能边界检测：超出右边界则翻转至光标左侧，仍不足则吸附安全边距
+    if (x + actualWidth > window.innerWidth - padding) {
+        x = clientX - actualWidth - 2;
+        if (x < padding) {
+            x = Math.max(padding, window.innerWidth - actualWidth - padding);
+        }
     }
-    if (y + actualHeight > window.innerHeight) {
-        y = window.innerHeight - actualHeight - 5;
+
+    // Y 轴智能边界检测：超出下边界则向上翻转，仍不足则底对齐在视口安全区域
+    if (y + actualHeight > window.innerHeight - padding) {
+        y = clientY - actualHeight - 2;
+        if (y < padding) {
+            y = Math.max(padding, window.innerHeight - actualHeight - padding);
+        }
     }
 
-    contextMenu.style.left = x + 'px';
-    contextMenu.style.top = y + 'px';
+    contextMenu.style.left = Math.round(x) + 'px';
+    contextMenu.style.top = Math.round(y) + 'px';
+    contextMenu.style.visibility = 'visible';
 }
 
 function triggerAction(action) {
@@ -466,7 +944,7 @@ function triggerAction(action) {
             const item = selectables[0];
             const path = item.getAttribute('data-path');
             const oldName = item.querySelector('.name-text') ? item.querySelector('.name-text').innerText : item.getAttribute('data-name');
-            const newName = prompt('输入新的名称:', oldName);
+            const newName = prompt(t('prompt_new_name'), oldName);
             if (newName && newName !== oldName) {
                 fetch(`/api/file/rename?path=${encodeURIComponent(path)}&newName=${encodeURIComponent(newName)}`)
                     .then(res => res.json())
@@ -492,7 +970,7 @@ function triggerAction(action) {
         }
     } else if (action === 'delete') {
         if (selectables.length > 0) {
-            if (confirm('确定要删除选中的项目吗？此操作不可逆！')) {
+            if (confirm(t('confirm_delete'))) {
                 const paths = selectables.map(item => item.getAttribute('data-path')).join('|');
                 fetch(`/api/file/delete?paths=${encodeURIComponent(paths)}`)
                     .then(res => res.json())
@@ -507,7 +985,7 @@ function triggerAction(action) {
         }
     } else if (action === 'paste') {
         if (typeof currentDirPath === 'undefined') {
-            alert('请先进入磁盘分区或文件夹内再进行粘贴。');
+            alert(t('alert_paste_in_dir'));
             return;
         }
         fetch(`/api/file/paste?targetDir=${encodeURIComponent(currentDirPath)}`)
@@ -521,6 +999,8 @@ function triggerAction(action) {
             });
     } else if (action === 'refresh') {
         window.location.reload();
+    } else if (action === 'resetSort') {
+        resetTableSort();
     } else if (action === 'properties') {
         showProperties();
     }
@@ -611,7 +1091,7 @@ function triggerSubAction(action, item, param) {
                     alert(data.message);
                 }
             })
-            .catch(err => alert("网络错误: " + err.message));
+            .catch(err => alert(t('alert_network_error', err.message)));
     }
 }
 
@@ -620,10 +1100,10 @@ function openWithHost(path) {
         .then(res => res.json())
         .then(data => {
             if (!data.success) {
-                alert("打开失败: " + data.message);
+                alert(t('alert_open_fail', data.message));
             }
         })
-        .catch(err => alert("网络错误: " + err.message));
+        .catch(err => alert(t('alert_network_error', err.message)));
 }
 
 function closeProperties() {
@@ -636,44 +1116,44 @@ function showProperties() {
 
     const paths = selectables.map(item => item.getAttribute('data-path')).join('|');
     const body = document.getElementById('properties-body');
-    body.innerHTML = '<div style="text-align: center; padding: 20px;">🔄 正在计算属性...</div>';
+    body.innerHTML = `<div style="text-align: center; padding: 20px;">${t('prop_calculating')}</div>`;
     document.getElementById('properties-modal').style.display = 'flex';
 
     fetch(`/api/file/properties?paths=${encodeURIComponent(paths)}`)
         .then(res => res.json())
         .then(data => {
             if (!data.success) {
-                body.innerHTML = `<div style="color: #e74c3c;">❌ 获取属性失败: ${data.message}</div>`;
+                body.innerHTML = `<div style="color: #e74c3c;">${t('prop_failed', data.message)}</div>`;
                 return;
             }
 
             let html = '<table class="properties-table">';
             if (!data.multi) {
-                html += `<tr><td class="label">名称:</td><td class="val" style="font-weight: bold;">${data.name}</td></tr>`;
-                html += `<tr><td class="label">类型:</td><td class="val">${data.isDir ? '文件夹' : (data.ext || '未知文件') + ' 文件'}</td></tr>`;
-                html += `<tr><td class="label">位置:</td><td class="val">${data.folder || '根目录'}</td></tr>`;
-                html += `<tr><td class="label">大小:</td><td class="val">${data.size} (${data.sizeBytes.toLocaleString()} 字节)</td></tr>`;
+                html += `<tr><td class="label">${t('prop_name')}</td><td class="val" style="font-weight: bold;">${data.name}</td></tr>`;
+                html += `<tr><td class="label">${t('prop_type')}</td><td class="val">${data.isDir ? t('type_folder') : t('type_file_suffix', data.ext || 'File')}</td></tr>`;
+                html += `<tr><td class="label">${t('prop_location')}</td><td class="val">${data.folder || '/'}</td></tr>`;
+                html += `<tr><td class="label">${t('prop_size')}</td><td class="val">${data.size} (${t('prop_bytes_suffix', data.sizeBytes.toLocaleString())})</td></tr>`;
                 if (data.isDir) {
-                    html += `<tr><td class="label">包含:</td><td class="val">${data.files} 个文件, ${data.folders} 个文件夹</td></tr>`;
+                    html += `<tr><td class="label">${t('prop_contains')}</td><td class="val">${t('prop_contains_val', data.files, data.folders)}</td></tr>`;
                 }
                 html += `<tr><td colspan="2"><div class="properties-divider"></div></td></tr>`;
-                html += `<tr><td class="label">物理路径:</td><td class="val">${data.path}</td></tr>`;
-                html += `<tr><td class="label">创建时间:</td><td class="val">${data.created}</td></tr>`;
-                html += `<tr><td class="label">修改时间:</td><td class="val">${data.modified}</td></tr>`;
+                html += `<tr><td class="label">${t('prop_path')}</td><td class="val">${data.path}</td></tr>`;
+                html += `<tr><td class="label">${t('prop_created')}</td><td class="val">${data.created}</td></tr>`;
+                html += `<tr><td class="label">${t('prop_modified')}</td><td class="val">${data.modified}</td></tr>`;
                 if (data.attrs) {
-                    html += `<tr><td class="label">属性:</td><td class="val">${data.attrs}</td></tr>`;
+                    html += `<tr><td class="label">${t('prop_attrs')}</td><td class="val">${data.attrs}</td></tr>`;
                 }
             } else {
-                html += `<tr><td class="label">对象数量:</td><td class="val" style="font-weight: bold;">选中了 ${data.count} 个项目</td></tr>`;
-                html += `<tr><td class="label">包含:</td><td class="val">${data.files} 个文件, ${data.folders} 个文件夹</td></tr>`;
-                html += `<tr><td class="label">位置:</td><td class="val">${data.folder}</td></tr>`;
-                html += `<tr><td class="label">总大小:</td><td class="val">${data.size} (${data.sizeBytes.toLocaleString()} 字节)</td></tr>`;
+                html += `<tr><td class="label">${t('prop_name')}</td><td class="val" style="font-weight: bold;">${t('prop_selected_count', data.count)}</td></tr>`;
+                html += `<tr><td class="label">${t('prop_contains')}</td><td class="val">${t('prop_contains_val', data.files, data.folders)}</td></tr>`;
+                html += `<tr><td class="label">${t('prop_location')}</td><td class="val">${data.folder}</td></tr>`;
+                html += `<tr><td class="label">${t('prop_total_size')}</td><td class="val">${data.size} (${t('prop_bytes_suffix', data.sizeBytes.toLocaleString())})</td></tr>`;
             }
             html += '</table>';
             body.innerHTML = html;
         })
         .catch(err => {
-            body.innerHTML = `<div style="color: #e74c3c;">❌ 获取属性失败: ${err.message}</div>`;
+            body.innerHTML = `<div style="color: #e74c3c;">${t('prop_failed', err.message)}</div>`;
         });
 }
 
@@ -682,7 +1162,7 @@ function closeLogs() {
 }
 
 function clearLogs() {
-    if (confirm('确定要清空所有运行日志吗？')) {
+    if (confirm(t('logs_confirm_clear'))) {
         fetch('/api/logs/clear')
             .then(res => res.json())
             .then(data => {
@@ -695,18 +1175,18 @@ function clearLogs() {
 
 function showLogs() {
     const container = document.getElementById('log-container');
-    container.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 20px;">🔄 正在加载日志...</div>';
+    container.innerHTML = `<div style="color: var(--text-muted); text-align: center; padding: 20px;">${t('logs_loading')}</div>`;
     document.getElementById('log-modal').style.display = 'flex';
 
     fetch('/api/logs')
         .then(res => res.json())
         .then(data => {
             if (!data.success) {
-                container.innerHTML = `<div style="color: #f48771;">❌ 加载日志失败: ${data.message}</div>`;
+                container.innerHTML = `<div style="color: #f48771;">${t('logs_load_fail', data.message)}</div>`;
                 return;
             }
             if (data.logs.length === 0) {
-                container.innerHTML = '<div style="color: #777; text-align: center; padding: 20px;">📭 暂无运行日志</div>';
+                container.innerHTML = `<div style="color: #777; text-align: center; padding: 20px;">${t('logs_empty')}</div>`;
                 return;
             }
             let html = '';
@@ -723,7 +1203,7 @@ function showLogs() {
             container.scrollTop = container.scrollHeight;
         })
         .catch(err => {
-            container.innerHTML = `<div style="color: #f48771;">❌ 加载日志发生错误: ${err.message}</div>`;
+            container.innerHTML = `<div style="color: #f48771;">${t('logs_error', err.message)}</div>`;
         });
 }
 
@@ -783,13 +1263,13 @@ function expandTreeNode(event, path) {
         return;
     }
 
-    container.innerHTML = `<div style='padding: 2px 10px; color: var(--text-muted); font-size: 0.8rem;'>🔄 正在载入...</div>`;
+    container.innerHTML = `<div style='padding: 2px 10px; color: var(--text-muted); font-size: 0.8rem;'>${t('tree_loading')}</div>`;
 
     fetch(`/api/explorer/tree?path=${encodeURIComponent(path)}`)
         .then(res => res.json())
         .then(data => {
             if (!data.success || data.folders.length === 0) {
-                container.innerHTML = `<div style='padding: 2px 10px; color: var(--text-muted); font-size: 0.8rem;'>📭 空文件夹</div>`;
+                container.innerHTML = `<div style='padding: 2px 10px; color: var(--text-muted); font-size: 0.8rem;'>${t('tree_empty')}</div>`;
                 if (arrow && data.folders.length === 0) {
                     arrow.style.visibility = 'hidden';
                 }
@@ -832,7 +1312,7 @@ function expandTreeNode(event, path) {
             });
         })
         .catch(err => {
-            container.innerHTML = `<div style='padding: 2px 10px; color: #e74c3c; font-size: 0.8rem;'>❌ 加载失败</div>`;
+            container.innerHTML = `<div style='padding: 2px 10px; color: #e74c3c; font-size: 0.8rem;'>${t('tree_load_fail')}</div>`;
         });
 }
 
@@ -845,7 +1325,7 @@ function updateLivePreview() {
     const selectables = Array.from(selectedRows);
 
     if (selectables.length === 0) {
-        content.innerHTML = `<div style='color: var(--text-muted); font-size: 0.9rem; padding-top: 40px;'>🔍 未选择任何项目</div>`;
+        content.innerHTML = `<div style='color: var(--text-muted); font-size: 0.9rem; padding-top: 40px;'>${t('preview_unselected')}</div>`;
         return;
     }
 
@@ -859,19 +1339,19 @@ function updateLivePreview() {
         });
         content.innerHTML = `
             <div style='font-size: 3rem; margin-bottom: 10px;'>📚</div>
-            <div style='font-weight: bold; font-size: 1rem;'>已选择多个对象</div>
+            <div style='font-weight: bold; font-size: 1rem;'>${t('preview_multi_title')}</div>
             <div class='preview-meta' style='margin-top: 15px;'>
                 <div class='preview-meta-row'>
-                    <span class='preview-meta-label'>对象总数:</span>
-                    <span class='preview-meta-value'>${selectables.length} 个项目</span>
+                    <span class='preview-meta-label'>${t('preview_meta_total_objects')}</span>
+                    <span class='preview-meta-value'>${t('preview_meta_items_val', selectables.length)}</span>
                 </div>
                 <div class='preview-meta-row'>
-                    <span class='preview-meta-label'>文件数:</span>
-                    <span class='preview-meta-value'>${filesCount} 个文件</span>
+                    <span class='preview-meta-label'>${t('preview_meta_files_count')}</span>
+                    <span class='preview-meta-value'>${t('preview_meta_files_val', filesCount)}</span>
                 </div>
                 <div class='preview-meta-row'>
-                    <span class='preview-meta-label'>文件夹数:</span>
-                    <span class='preview-meta-value'>${dirsCount} 个文件夹</span>
+                    <span class='preview-meta-label'>${t('preview_meta_folders_count')}</span>
+                    <span class='preview-meta-value'>${t('preview_meta_folders_val', dirsCount)}</span>
                 </div>
             </div>
         `;
@@ -890,7 +1370,7 @@ function updateLivePreview() {
     const modifiedTime = timeCell ? timeCell.innerText.trim() : '';
     const sizeText = sizeCell ? sizeCell.innerText.trim() : '-';
 
-    content.innerHTML = `<div style='text-align: center; padding: 20px;'>🔄 正在载入预览...</div>`;
+    content.innerHTML = `<div style='text-align: center; padding: 20px;'>${t('preview_loading')}</div>`;
 
     if (type === 'dir') {
         content.innerHTML = `
@@ -898,20 +1378,20 @@ function updateLivePreview() {
             <div style='font-weight: bold; font-size: 0.95rem; word-break: break-all;'>${escapeHtml(displayName)}</div>
             <div class='preview-meta' style='margin-top: 15px;'>
                 <div class='preview-meta-row'>
-                    <span class='preview-meta-label'>类型:</span>
-                    <span class='preview-meta-value'>文件夹</span>
+                    <span class='preview-meta-label'>${t('preview_meta_type')}</span>
+                    <span class='preview-meta-value'>${t('preview_type_folder')}</span>
                 </div>
                 <div class='preview-meta-row'>
-                    <span class='preview-meta-label'>修改时间:</span>
+                    <span class='preview-meta-label'>${t('preview_meta_modified')}</span>
                     <span class='preview-meta-value'>${modifiedTime}</span>
                 </div>
                 <div class='preview-meta-row'>
-                    <span class='preview-meta-label'>收藏状态:</span>
-                    <span class='preview-meta-value'>${isFav ? '★ 已收藏' : '未收藏'}</span>
+                    <span class='preview-meta-label'>${t('preview_meta_fav_status')}</span>
+                    <span class='preview-meta-value'>${isFav ? t('preview_meta_fav_yes') : t('preview_meta_fav_no')}</span>
                 </div>
             </div>
             <div style='margin-top: 15px; font-size: 0.75rem; color: var(--text-muted); word-break: break-all; text-align: left; width: 100%; border-top: 1px solid var(--border-color); padding-top: 10px;'>
-                <strong>物理路径:</strong><br>${escapeHtml(path)}
+                <strong>${t('preview_meta_physical_path')}</strong><br>${escapeHtml(path)}
             </div>
         `;
     } else {
@@ -925,19 +1405,19 @@ function updateLivePreview() {
 
         if (imgExts.includes(ext)) {
             content.innerHTML = `
-                <img class='preview-thumbnail' src='${webLink}' alt='预览' onerror="this.src='/favicon.ico';">
+                <img class='preview-thumbnail' src='${webLink}' alt='preview' onerror="this.src='/favicon.ico';">
                 <div style='font-weight: bold; font-size: 0.9rem; word-break: break-all; margin-top: 10px;'>${escapeHtml(displayName)}</div>
                 <div class='preview-meta' style='margin-top: 10px;'>
                     <div class='preview-meta-row'>
-                        <span class='preview-meta-label'>类型:</span>
-                        <span class='preview-meta-value'>${ext.toUpperCase()} 图片</span>
+                        <span class='preview-meta-label'>${t('preview_meta_type')}</span>
+                        <span class='preview-meta-value'>${t('preview_type_image', ext.toUpperCase())}</span>
                     </div>
                     <div class='preview-meta-row'>
-                        <span class='preview-meta-label'>大小:</span>
+                        <span class='preview-meta-label'>${t('preview_meta_size')}</span>
                         <span class='preview-meta-value'>${sizeText}</span>
                     </div>
                     <div class='preview-meta-row'>
-                        <span class='preview-meta-label'>修改时间:</span>
+                        <span class='preview-meta-label'>${t('preview_meta_modified')}</span>
                         <span class='preview-meta-value'>${modifiedTime}</span>
                     </div>
                 </div>
@@ -949,11 +1429,11 @@ function updateLivePreview() {
                 <div style='font-weight: bold; font-size: 0.9rem; word-break: break-all; margin-top: 10px;'>${escapeHtml(displayName)}</div>
                 <div class='preview-meta' style='margin-top: 10px;'>
                     <div class='preview-meta-row'>
-                        <span class='preview-meta-label'>类型:</span>
-                        <span class='preview-meta-value'>音频文件</span>
+                        <span class='preview-meta-label'>${t('preview_meta_type')}</span>
+                        <span class='preview-meta-value'>${t('preview_type_audio')}</span>
                     </div>
                     <div class='preview-meta-row'>
-                        <span class='preview-meta-label'>大小:</span>
+                        <span class='preview-meta-label'>${t('preview_meta_size')}</span>
                         <span class='preview-meta-value'>${sizeText}</span>
                     </div>
                 </div>
@@ -964,11 +1444,11 @@ function updateLivePreview() {
                 <div style='font-weight: bold; font-size: 0.9rem; word-break: break-all; margin-top: 10px;'>${escapeHtml(displayName)}</div>
                 <div class='preview-meta' style='margin-top: 10px;'>
                     <div class='preview-meta-row'>
-                        <span class='preview-meta-label'>类型:</span>
-                        <span class='preview-meta-value'>视频文件</span>
+                        <span class='preview-meta-label'>${t('preview_meta_type')}</span>
+                        <span class='preview-meta-value'>${t('preview_type_video')}</span>
                     </div>
                     <div class='preview-meta-row'>
-                        <span class='preview-meta-label'>大小:</span>
+                        <span class='preview-meta-label'>${t('preview_meta_size')}</span>
                         <span class='preview-meta-value'>${sizeText}</span>
                     </div>
                 </div>
@@ -983,11 +1463,11 @@ function updateLivePreview() {
                             <div style='font-weight: bold; font-size: 0.9rem; word-break: break-all; margin-top: 10px;'>${escapeHtml(displayName)}</div>
                             <div class='preview-meta' style='margin-top: 10px;'>
                                 <div class='preview-meta-row'>
-                                    <span class='preview-meta-label'>类型:</span>
-                                    <span class='preview-meta-value'>${ext.toUpperCase()} 文本</span>
+                                    <span class='preview-meta-label'>${t('preview_meta_type')}</span>
+                                    <span class='preview-meta-value'>${t('preview_type_text', ext.toUpperCase())}</span>
                                 </div>
                                 <div class='preview-meta-row'>
-                                    <span class='preview-meta-label'>大小:</span>
+                                    <span class='preview-meta-label'>${t('preview_meta_size')}</span>
                                     <span class='preview-meta-value'>${sizeText}</span>
                                 </div>
                             </div>
@@ -1012,20 +1492,20 @@ function showGenericPreview(displayName, ext, sizeText, modifiedTime, path) {
         <div style='font-weight: bold; font-size: 0.90rem; word-break: break-all;'>${escapeHtml(displayName)}</div>
         <div class='preview-meta' style='margin-top: 15px;'>
             <div class='preview-meta-row'>
-                <span class='preview-meta-label'>类型:</span>
-                <span class='preview-meta-value'>${ext.toUpperCase() || '未知'} 文件</span>
+                <span class='preview-meta-label'>${t('preview_meta_type')}</span>
+                <span class='preview-meta-value'>${t('preview_type_file', ext.toUpperCase() || 'File')}</span>
             </div>
             <div class='preview-meta-row'>
-                <span class='preview-meta-label'>大小:</span>
+                <span class='preview-meta-label'>${t('preview_meta_size')}</span>
                 <span class='preview-meta-value'>${sizeText}</span>
             </div>
             <div class='preview-meta-row'>
-                <span class='preview-meta-label'>修改时间:</span>
+                <span class='preview-meta-label'>${t('preview_meta_modified')}</span>
                 <span class='preview-meta-value'>${modifiedTime}</span>
             </div>
         </div>
         <div style='margin-top: 15px; font-size: 0.75rem; color: var(--text-muted); word-break: break-all; text-align: left; width: 100%; border-top: 1px solid var(--border-color); padding-top: 10px;'>
-            <strong>物理路径:</strong><br>${escapeHtml(path)}
+            <strong>${t('preview_meta_physical_path')}</strong><br>${escapeHtml(path)}
         </div>
     `;
 }
@@ -1083,11 +1563,11 @@ function handleAddressKey(event) {
                     const webLink = convertPhysicalToWebPath(rawVal);
                     window.location.href = webLink;
                 } else {
-                    alert('路径不存在或无权访问，请检查拼写并重试！');
+                    alert(t('alert_path_not_found'));
                 }
             })
             .catch(() => {
-                alert('校验路径时发生 network 错误！');
+                alert(t('alert_network_check_fail'));
             });
     }
 }
@@ -1118,7 +1598,7 @@ function loadGradleInfo() {
         .then(res => res.json())
         .then(data => {
             if (!data.success) {
-                document.getElementById('gradle-stat-home').innerHTML = `<span style='color: var(--text-muted); font-size: 0.8rem;'>未找到有效根路径</span>`;
+                document.getElementById('gradle-stat-home').innerHTML = `<span style='color: var(--text-muted); font-size: 0.8rem;'>${t('gradle_js_stat_no_home')}</span>`;
                 document.getElementById('gradle-wrappers-grid').innerHTML = `<div style='padding: 15px; color: #e74c3c; text-align: center; grid-column: 1/-1;'>❌ ${data.message}</div>`;
                 document.getElementById('gradle-deps-tbody').innerHTML = `<tr><td colspan='4' style='padding: 20px; text-align: center; color: #e74c3c;'>❌ ${data.message}</td></tr>`;
                 return;
@@ -1127,21 +1607,21 @@ function loadGradleInfo() {
             const scanBtn = document.getElementById('gradle-refresh-btn');
             if (data.isScanning) {
                 if (scanBtn) {
-                    scanBtn.innerText = '🔄 扫描中...';
+                    scanBtn.innerText = t('gradle_js_btn_scanning');
                     scanBtn.disabled = true;
                     scanBtn.style.opacity = '0.6';
                     scanBtn.style.cursor = 'not-allowed';
                 }
-                document.getElementById('gradle-stat-count').innerHTML = `<span style='color: var(--text-muted); font-size: 0.85rem;'>⏳ 扫描中...</span>`;
-                document.getElementById('gradle-stat-size').innerHTML = `<span style='color: var(--text-muted); font-size: 0.85rem;'>⏳ 扫描中...</span>`;
-                document.getElementById('gradle-stat-kmp').innerHTML = `<span style='color: var(--text-muted); font-size: 0.85rem;'>⏳ 扫描中...</span>`;
+                document.getElementById('gradle-stat-count').innerHTML = `<span style='color: var(--text-muted); font-size: 0.85rem;'>${t('gradle_js_scanning')}</span>`;
+                document.getElementById('gradle-stat-size').innerHTML = `<span style='color: var(--text-muted); font-size: 0.85rem;'>${t('gradle_js_scanning')}</span>`;
+                document.getElementById('gradle-stat-kmp').innerHTML = `<span style='color: var(--text-muted); font-size: 0.85rem;'>${t('gradle_js_scanning')}</span>`;
                 
                 if (!window.gradlePollTimer) {
                     window.gradlePollTimer = setInterval(loadGradleInfo, 2000);
                 }
             } else {
                 if (scanBtn) {
-                    scanBtn.innerText = '🔄 重新扫描';
+                    scanBtn.innerText = t('gradle_btn_rescan');
                     scanBtn.disabled = false;
                     scanBtn.style.opacity = '1';
                     scanBtn.style.cursor = 'pointer';
@@ -1163,7 +1643,7 @@ function loadGradleInfo() {
             const grid = document.getElementById('gradle-wrappers-grid');
             grid.innerHTML = '';
             if (data.wrappers.length === 0) {
-                grid.innerHTML = `<div style='padding: 15px; color: var(--text-muted); text-align: center; grid-column: 1/-1;'>📭 未检测到本地已解压的 Gradle Wrapper 分发包</div>`;
+                grid.innerHTML = `<div style='padding: 15px; color: var(--text-muted); text-align: center; grid-column: 1/-1;'>${t('gradle_js_no_wrappers')}</div>`;
                 return;
             }
             data.wrappers.forEach(w => {
@@ -1183,7 +1663,7 @@ function loadGradleInfo() {
             });
         })
         .catch(err => {
-            console.error('获取 Gradle 摘要失败:', err);
+            console.error('Failed to get Gradle summary:', err);
         });
 }
 
@@ -1195,14 +1675,14 @@ function triggerGradleScan() {
         .then(res => res.json())
         .then(data => {
             if (data.success) {
-                alert('🔄 已在后台启动新的依赖库与 wrappers 扫描线程！');
+                alert(t('gradle_js_scan_triggered'));
                 loadGradleInfo();
             } else {
-                alert('❌ 触发扫描失败: ' + data.message);
+                alert(t('gradle_js_scan_fail', data.message));
             }
         })
         .catch(err => {
-            alert('❌ 触发扫描失败: ' + err.message);
+            alert(t('gradle_js_scan_fail', err.message));
         });
 }
 
@@ -1210,29 +1690,29 @@ function openInExplorer(path) {
     fetch(`/api/file/open-host?path=${encodeURIComponent(path)}`)
         .then(res => res.json())
         .then(data => {
-            if (!data.success) alert('❌ 打开目录失败: ' + data.message);
+            if (!data.success) alert(t('gradle_js_open_dir_fail', data.message));
         })
         .catch(err => {
-            alert('❌ 打开目录失败: ' + err.message);
+            alert(t('gradle_js_open_dir_fail', err.message));
         });
 }
 
 function deleteWrapper(path, version) {
-    if (!confirm(`⚠️ 确定要物理清理已解压的 Gradle Wrapper 分发包：Gradle ${version} 吗？\n\n路径：${path}\n\n此操作将彻底删除此版本的物理文件夹。您确定要执行吗？`)) {
+    if (!confirm(t('gradle_js_confirm_delete_wrapper', version, path))) {
         return;
     }
     fetch(`/api/gradle/delete-wrapper?path=${encodeURIComponent(path)}`)
         .then(res => res.json())
         .then(data => {
             if (data.success) {
-                alert('✅ 该 Gradle Wrapper 分发包已成功物理清理！');
+                alert(t('gradle_js_delete_wrapper_success'));
                 loadGradleInfo();
             } else {
-                alert('❌ 清理失败: ' + data.message);
+                alert(t('gradle_js_delete_wrapper_fail', data.message));
             }
         })
         .catch(err => {
-            alert('❌ 清理失败: ' + err.message);
+            alert(t('gradle_js_delete_wrapper_fail', err.message));
         });
 }
 
@@ -1257,19 +1737,19 @@ function loadWrapperDetails(version, cardElement) {
     const content = document.getElementById('gradle-preview-body');
     if (!content) return;
     
-    content.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-muted);">🔄 正在获取 Wrapper 详情...</div>';
+    content.innerHTML = `<div style="text-align: center; padding: 20px; color: var(--text-muted);">${t('gradle_js_wrapper_loading')}</div>`;
 
     fetch(`/api/gradle/wrapper-detail?version=${encodeURIComponent(version)}`)
         .then(res => res.json())
         .then(data => {
             if (!data.success) {
-                content.innerHTML = `<div style="color: #e74c3c; padding: 15px;">❌ 错误: ${data.message}</div>`;
+                content.innerHTML = `<div style="color: #e74c3c; padding: 15px;">❌ ${t('err_internal', data.message)}</div>`;
                 return;
             }
 
             let subfoldersHtml = '';
             if (data.subfolders.length === 0) {
-                subfoldersHtml = '<span style="color: var(--text-muted); font-size: 0.8rem;">空</span>';
+                subfoldersHtml = `<span style="color: var(--text-muted); font-size: 0.8rem;">${t('gradle_js_wrapper_subfolder_empty')}</span>`;
             } else {
                 subfoldersHtml = data.subfolders.map(f => `<span style="background: rgba(41, 128, 185, 0.1); border: 1px solid rgba(41, 128, 185, 0.3); color: var(--accent-hover); font-weight: 500; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">${escapeHtml(f)}</span>`).join(' ');
             }
@@ -1279,41 +1759,41 @@ function loadWrapperDetails(version, cardElement) {
                     <span style="font-size: 2.2rem;">☕</span>
                     <div>
                         <div style="font-weight: bold; font-size: 1.15rem; color: var(--accent-hover);">Gradle ${escapeHtml(data.version)}</div>
-                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">Wrappers 本地分包</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">${t('gradle_js_wrapper_pkg_tag')}</div>
                     </div>
                 </div>
                 
                 <div style="background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px; margin-bottom: 15px; font-size: 0.85rem; display: flex; flex-direction: column; gap: 6px;">
-                    <div style="display: flex; justify-content: space-between;"><span style="color:var(--text-muted);">分包体积:</span><strong>${data.size}</strong></div>
-                    <div style="display: flex; justify-content: space-between;"><span style="color:var(--text-muted);">文件总数:</span><span>${data.fileCount.toLocaleString()} 个</span></div>
-                    <div style="display: flex; justify-content: space-between;"><span style="color:var(--text-muted);">压缩文件:</span><span>${escapeHtml(data.zipFile)} (${data.zipExists ? '✅ 已下载' : '❌ 缺失'})</span></div>
+                    <div style="display: flex; justify-content: space-between;"><span style="color:var(--text-muted);">${t('gradle_js_wrapper_pkg_size')}</span><strong>${data.size}</strong></div>
+                    <div style="display: flex; justify-content: space-between;"><span style="color:var(--text-muted);">${t('gradle_js_wrapper_total_files')}</span><span>${t('gradle_js_wrapper_total_files_val', data.fileCount.toLocaleString())}</span></div>
+                    <div style="display: flex; justify-content: space-between;"><span style="color:var(--text-muted);">${t('gradle_js_wrapper_zip_file')}</span><span>${escapeHtml(data.zipFile)} (${data.zipExists ? t('gradle_js_wrapper_zip_downloaded') : t('gradle_js_wrapper_zip_missing')})</span></div>
                 </div>
 
                 <div style="margin-bottom: 15px;">
-                    <h4 style="margin-top: 0; margin-bottom: 4px; font-size: 0.85rem; color: var(--text-muted);">📂 解压物理路径 (点击复制):</h4>
-                    <div style="font-family: monospace; font-size: 0.75rem; background: var(--bg-color); border: 1px solid var(--border-color); padding: 8px; border-radius: 4px; overflow-x: auto; white-space: nowrap; cursor: pointer; text-decoration: underline; width: 100%; max-width: 100%; box-sizing: border-box;" onclick="copyToClipboard(this, '${escapeJs(data.path)}' )" title="点击复制路径">${escapeHtml(data.path)}</div>
+                    <h4 style="margin-top: 0; margin-bottom: 4px; font-size: 0.85rem; color: var(--text-muted);">${t('gradle_js_wrapper_path_title')}</h4>
+                    <div style="font-family: monospace; font-size: 0.75rem; background: var(--bg-color); border: 1px solid var(--border-color); padding: 8px; border-radius: 4px; overflow-x: auto; white-space: nowrap; cursor: pointer; text-decoration: underline; width: 100%; max-width: 100%; box-sizing: border-box;" onclick="copyToClipboard(this, '${escapeJs(data.path)}' )" title="Copy Path">${escapeHtml(data.path)}</div>
                 </div>
 
                 <div style="margin-bottom: 15px;">
-                    <h4 style="margin-top: 0; margin-bottom: 4px; font-size: 0.85rem; color: var(--text-muted);">💾 缓存哈希目录:</h4>
+                    <h4 style="margin-top: 0; margin-bottom: 4px; font-size: 0.85rem; color: var(--text-muted);">${t('gradle_js_wrapper_hash_dir')}</h4>
                     <div style="font-family: monospace; font-size: 0.75rem; background: var(--bg-color); border: 1px solid var(--border-color); padding: 8px; border-radius: 4px; color: var(--text-muted); word-break: break-all;">${escapeHtml(data.hashFolder)}</div>
                 </div>
 
                 <div style="margin-bottom: 15px; display: flex; flex-direction: column; min-height: 100px;">
-                    <h4 style="margin-top: 0; margin-bottom: 6px; font-size: 0.85rem; color: var(--text-muted);">🌱 解压后直接下级目录:</h4>
+                    <h4 style="margin-top: 0; margin-bottom: 6px; font-size: 0.85rem; color: var(--text-muted);">${t('gradle_js_wrapper_subdirs')}</h4>
                     <div style="overflow-y: auto; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 4px; padding: 8px; max-height: 140px; display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start;">
                         ${subfoldersHtml}
                     </div>
                 </div>
 
                 <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
-                    <button onclick="openInExplorer('${escapeJs(data.path)}' )" style="width: 100%; padding: 8px; border-radius: 4px; background: var(--border-color); border: 1px solid var(--border-color); color: var(--text-color); font-weight: bold; cursor: pointer;">📂 宿主资源管理器中定位</button>
-                    <button onclick="deleteWrapper('${escapeJs(data.path)}' , '${escapeJs(data.version)}' )" style="width: 100%; padding: 8px; border-radius: 4px; background: #e74c3c; border: none; color: white; font-weight: bold; cursor: pointer;">🗑️ 物理安全清理 (不可逆)</button>
+                    <button onclick="openInExplorer('${escapeJs(data.path)}' )" style="width: 100%; padding: 8px; border-radius: 4px; background: var(--border-color); border: 1px solid var(--border-color); color: var(--text-color); font-weight: bold; cursor: pointer;">${t('gradle_js_btn_open_in_explorer')}</button>
+                    <button onclick="deleteWrapper('${escapeJs(data.path)}' , '${escapeJs(data.version)}' )" style="width: 100%; padding: 8px; border-radius: 4px; background: #e74c3c; border: none; color: white; font-weight: bold; cursor: pointer;">${t('gradle_js_btn_delete_wrapper')}</button>
                 </div>
             `;
         })
         .catch(err => {
-            content.innerHTML = `<div style="color: #e74c3c; padding: 15px;">❌ 无法加载详情: ${err.message}</div>`;
+            content.innerHTML = `<div style="color: #e74c3c; padding: 15px;">❌ ${err.message}</div>`;
         });
 }
 
@@ -1330,11 +1810,11 @@ function copyToClipboard(btn, text) {
     document.body.removeChild(el);
     if (btn && btn.tagName === 'BUTTON') {
         const oldText = btn.innerText;
-        btn.innerText = '✓ 已复制';
+        btn.innerText = t('btn_copied');
         setTimeout(() => { btn.innerText = oldText; }, 2000);
     } else if (btn) {
         const oldTitle = btn.title;
-        btn.title = '✓ 路径已复制！';
+        btn.title = t('btn_path_copied');
         setTimeout(() => { btn.title = oldTitle; }, 2000);
     }
 }
@@ -1384,13 +1864,13 @@ function compareVersions(a, b) {
 
 function loadGradleDeps(query) {
     const tbody = document.getElementById('gradle-deps-tbody');
-    tbody.innerHTML = `<tr><td colspan='4' style='padding: 20px; text-align: center; color: var(--text-muted);'>🔄 正在检索已缓存依赖...</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan='4' style='padding: 20px; text-align: center; color: var(--text-muted);'>${t('gradle_js_deps_searching')}</td></tr>`;
 
     fetch(`/api/gradle/search?q=${encodeURIComponent(query)}`)
         .then(res => res.json())
         .then(data => {
             if (!data.success) {
-                tbody.innerHTML = `<tr><td colspan='4' style='padding: 20px; text-align: center; color: #e74c3c;'>❌ ${data.message || '获取依赖失败'}</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan='4' style='padding: 20px; text-align: center; color: #e74c3c;'>❌ ${data.message || t('gradle_js_dep_load_fail', '')}</td></tr>`;
                 return;
             }
             
@@ -1439,12 +1919,12 @@ function loadGradleDeps(query) {
             gradleCurrentPage = 1;
             
             const title = document.getElementById('gradle-list-title');
-            if (title) title.innerText = `📦 已缓存的依赖库列表 (${gradleAllDeps.length} 个依赖库)`;
+            if (title) title.innerText = t('gradle_js_deps_list_count', gradleAllDeps.length);
 
             renderGradleDepsPage();
         })
         .catch(err => {
-            tbody.innerHTML = `<tr><td colspan='4' style='padding: 20px; text-align: center; color: #e74c3c;'>❌ 获取依赖失败: ${err.message}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan='4' style='padding: 20px; text-align: center; color: #e74c3c;'>${t('gradle_js_dep_load_fail', err.message)}</td></tr>`;
         });
 }
 
@@ -1455,9 +1935,9 @@ function renderGradleDepsPage() {
 
     const totalItems = gradleAllDeps.length;
     if (totalItems === 0) {
-        tbody.innerHTML = `<tr><td colspan='4' style='padding: 20px; text-align: center; color: var(--text-muted);'>📭 没有匹配的已缓存依赖库</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan='4' style='padding: 20px; text-align: center; color: var(--text-muted);'>${t('gradle_js_deps_no_match')}</td></tr>`;
         const info = document.getElementById('pagination-info');
-        if (info) info.innerText = '第 1 / 1 页 (共 0 条)';
+        if (info) info.innerText = t('gradle_pagination_info', 1, 1, 0);
         return;
     }
 
@@ -1471,7 +1951,7 @@ function renderGradleDepsPage() {
     const pageItems = gradleAllDeps.slice(startIndex, endIndex);
 
     const info = document.getElementById('pagination-info');
-    if (info) info.innerText = `第 ${gradleCurrentPage} / ${totalPages} 页 (共 ${totalItems} 条，当前显示 ${startIndex + 1} - ${endIndex})`;
+    if (info) info.innerText = t('gradle_pagination_detailed', gradleCurrentPage, totalPages, totalItems, startIndex + 1, endIndex);
 
     pageItems.forEach(item => {
         const tr = document.createElement('tr');
@@ -1491,7 +1971,7 @@ function renderGradleDepsPage() {
             showGradleDetail(item.group, item.artifact, latest.version);
         };
 
-        const versionTextHtml = `<span class="version-link" onclick="showVersionsModal(event, '${escapeJs(item.group)}', '${escapeJs(item.artifact)}')" style="color: var(--accent-hover); text-decoration: underline; cursor: pointer;" title="点击查看并管理所有版本">${escapeHtml(item.versionText)}</span>`;
+        const versionTextHtml = `<span class="version-link" onclick="showVersionsModal(event, '${escapeJs(item.group)}', '${escapeJs(item.artifact)}')" style="color: var(--accent-hover); text-decoration: underline; cursor: pointer;" title="${escapeHtml(t('gradle_modal_versions'))}">${escapeHtml(item.versionText)}</span>`;
 
         tr.innerHTML = `
             <td style='padding: 6px 10px; font-family: monospace; font-size: 0.85rem;'>
@@ -1532,13 +2012,13 @@ function gradleGoToPage(action) {
 
 function showGradleDetail(group, artifact, version) {
     const pane = document.getElementById('gradle-preview-body');
-    pane.innerHTML = '<div style="text-align: center; padding: 40px; color: var(--text-muted);">🔄 正在分析并载入 POM 级联依赖...</div>';
+    pane.innerHTML = `<div style="text-align: center; padding: 40px; color: var(--text-muted);">${t('gradle_js_pom_loading')}</div>`;
 
     fetch(`/api/gradle/detail?group=${encodeURIComponent(group)}&name=${encodeURIComponent(artifact)}&version=${encodeURIComponent(version)}`)
         .then(res => res.json())
         .then(data => {
             if (!data.success) {
-                pane.innerHTML = `<div style="color: #e74c3c; padding: 20px;">❌ 载入依赖失败: ${data.message}</div>`;
+                pane.innerHTML = `<div style="color: #e74c3c; padding: 20px;">${t('gradle_js_dep_load_fail', data.message)}</div>`;
                 return;
             }
 
@@ -1552,17 +2032,17 @@ function showGradleDetail(group, artifact, version) {
                 </div>
                 
                 <div style='background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px; margin-bottom: 15px; font-size: 0.85rem; display: flex; flex-direction: column; gap: 6px;'>
-                    <div style='display: flex; justify-content: space-between;'><span style='color:var(--text-muted);'>坐标版本:</span><strong>${escapeHtml(data.version)}</strong></div>
-                    <div style='display: flex; justify-content: space-between;'><span style='color:var(--text-muted);'>缓存大小:</span><span>${data.size}</span></div>
-                    <div style='display: flex; justify-content: space-between;'><span style='color:var(--text-muted);'>开源许可证:</span><span>${escapeHtml(data.license)}</span></div>
-                    ${data.organization ? `<div style='display: flex; justify-content: space-between;'><span style='color:var(--text-muted);'>发布组织:</span><span>${escapeHtml(data.organization)}</span></div>` : ''}
+                    <div style='display: flex; justify-content: space-between;'><span style='color:var(--text-muted);'>${t('gradle_js_meta_version')}</span><strong>${escapeHtml(data.version)}</strong></div>
+                    <div style='display: flex; justify-content: space-between;'><span style='color:var(--text-muted);'>${t('gradle_js_meta_size')}</span><span>${data.size}</span></div>
+                    <div style='display: flex; justify-content: space-between;'><span style='color:var(--text-muted);'>${t('gradle_js_meta_license')}</span><span>${escapeHtml(data.license)}</span></div>
+                    ${data.organization ? `<div style='display: flex; justify-content: space-between;'><span style='color:var(--text-muted);'>${t('gradle_js_meta_org')}</span><span>${escapeHtml(data.organization)}</span></div>` : ''}
                 </div>
             `;
 
             if (data.isKmp) {
                 html += `
                     <div style='margin-bottom: 15px;'>
-                        <h4 style='margin-top: 0; margin-bottom: 6px; font-size: 0.85rem; color: var(--text-muted);'>🌐 Kotlin Multiplatform (KMP) 适配平台:</h4>
+                        <h4 style='margin-top: 0; margin-bottom: 6px; font-size: 0.85rem; color: var(--text-muted);'>${t('gradle_js_meta_kmp_platforms')}</h4>
                         <div style='display: flex; flex-wrap: wrap; gap: 6px;'>
                 `;
                 data.platforms.forEach(p => {
@@ -1577,7 +2057,7 @@ function showGradleDetail(group, artifact, version) {
             if (data.description) {
                 html += `
                     <div style='margin-bottom: 15px;'>
-                        <h4 style='margin-top: 0; margin-bottom: 4px; font-size: 0.85rem; color: var(--text-muted);'>📝 库文件描述:</h4>
+                        <h4 style='margin-top: 0; margin-bottom: 4px; font-size: 0.85rem; color: var(--text-muted);'>${t('gradle_js_meta_desc')}</h4>
                         <div style='font-size: 0.8rem; background: var(--bg-color); border: 1px solid var(--border-color); padding: 8px; border-radius: 4px; max-height: 100px; overflow-y: auto; color: var(--text-muted); line-height: 1.4;'>${escapeHtml(data.description)}</div>
                     </div>
                 `;
@@ -1589,21 +2069,21 @@ function showGradleDetail(group, artifact, version) {
 
             html += `
                 <div style='margin-bottom: 15px; flex: 1; display: flex; flex-direction: column; min-height: 120px;'>
-                    <h4 onclick='showDepsListModal(event)' style='margin-top: 0; margin-bottom: 6px; font-size: 0.85rem; color: var(--accent-hover); text-decoration: underline; cursor: pointer;' title='点击查看完整依赖树列表'>🔗 POM 级联依赖集 (${data.dependencies.length} 个):</h4>
+                    <h4 onclick='showDepsListModal(event)' style='margin-top: 0; margin-bottom: 6px; font-size: 0.85rem; color: var(--accent-hover); text-decoration: underline; cursor: pointer;' title='${escapeHtml(t('gradle_modal_deps'))}'>${t('gradle_js_pom_deps_count', data.dependencies.length)}</h4>
                     <div style='flex: 1; overflow-y: auto; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 4px; padding: 8px; max-height: 200px;'>
             `;
             if (data.dependencies.length === 0) {
-                html += `<div style='font-size: 0.8rem; color: var(--text-muted); text-align: center; padding: 10px;'>无级联依赖依赖项</div>`;
+                html += `<div style='font-size: 0.8rem; color: var(--text-muted); text-align: center; padding: 10px;'>${t('gradle_js_pom_no_deps')}</div>`;
             } else {
                 data.dependencies.forEach(dep => {
                     html += `
-                        <div onclick='showDepsListModal(event)' style='display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding: 4px 0; font-size: 0.8rem; cursor: pointer; text-decoration: underline;' title='点击查看完整依赖树列表'>
+                        <div onclick='showDepsListModal(event)' style='display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding: 4px 0; font-size: 0.8rem; cursor: pointer; text-decoration: underline;' title='${escapeHtml(t('gradle_modal_deps'))}'>
                             <div style='min-width: 0; margin-right: 8px;' title='${escapeHtml(dep.group)}:${escapeHtml(dep.artifact)}:${escapeHtml(dep.version)}'>
                                 <div style='font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'>${escapeHtml(dep.artifact)}</div>
                                 <div style='font-size: 0.7rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'>${escapeHtml(dep.group)}:${escapeHtml(dep.version)}</div>
                             </div>
                             <div style='flex-shrink: 0;'>
-                                ${dep.isDownloaded ? '<span style="color: #2ecc71; font-weight: bold;" title="已在本地缓存">✓ 已缓存</span>' : '<span style="color: #e67e22; font-weight: bold;" title="未下载到本地缓存">⚠ 未缓存</span>'}
+                                ${dep.isDownloaded ? `<span style="color: #2ecc71; font-weight: bold;">${t('gradle_js_cached_yes')}</span>` : `<span style="color: #e67e22; font-weight: bold;">${t('gradle_js_cached_no')}</span>`}
                             </div>
                         </div>
                     `;
@@ -1616,33 +2096,33 @@ function showGradleDetail(group, artifact, version) {
 
             html += `
                 <div style='margin-bottom: 15px;'>
-                    <h4 style='margin-top: 0; margin-bottom: 6px; font-size: 0.85rem; color: var(--text-muted);'>📋 快速引入 Gradle 配置代码:</h4>
+                    <h4 style='margin-top: 0; margin-bottom: 6px; font-size: 0.85rem; color: var(--text-muted);'>${t('gradle_js_quick_code_title')}</h4>
                     <div style='display: flex; flex-direction: column; gap: 8px;'>
                         <div>
-                            <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;'><span style='font-size: 0.75rem; color: var(--text-muted);'>常规 JVM / Android 项目:</span><button onclick='copyToClipboard(this, "${escapeJs(data.implementationCode)}")' style='background: var(--border-color); border: none; font-size: 0.75rem; padding: 2px 8px; border-radius: 3px; cursor: pointer; color: var(--text-color);'>复制</button></div>
+                            <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;'><span style='font-size: 0.75rem; color: var(--text-muted);'>${t('gradle_js_code_jvm')}</span><button onclick='copyToClipboard(this, "${escapeJs(data.implementationCode)}")' style='background: var(--border-color); border: none; font-size: 0.75rem; padding: 2px 8px; border-radius: 3px; cursor: pointer; color: var(--text-color);'>${t('btn_copy')}</button></div>
                             <div style='font-family: monospace; font-size: 0.75rem; background: var(--bg-color); border: 1px solid var(--border-color); padding: 6px; border-radius: 4px; overflow-x: auto; white-space: nowrap; width: 100%; max-width: 100%; box-sizing: border-box;'>${escapeHtml(data.implementationCode)}</div>
                         </div>
                         <div>
-                            <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;'><span style='font-size: 0.75rem; color: var(--text-muted);'>Kotlin KMP (Multiplatform) 项目:</span><button onclick='copyToClipboard(this, "${escapeJs(data.kmpCode)}")' style='background: var(--border-color); border: none; font-size: 0.75rem; padding: 2px 8px; border-radius: 3px; cursor: pointer; color: var(--text-color);'>复制</button></div>
+                            <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;'><span style='font-size: 0.75rem; color: var(--text-muted);'>${t('gradle_js_code_kmp')}</span><button onclick='copyToClipboard(this, "${escapeJs(data.kmpCode)}")' style='background: var(--border-color); border: none; font-size: 0.75rem; padding: 2px 8px; border-radius: 3px; cursor: pointer; color: var(--text-color);'>${t('btn_copy')}</button></div>
                             <div style='font-family: monospace; font-size: 0.75rem; background: var(--bg-color); border: 1px solid var(--border-color); padding: 6px; border-radius: 4px; overflow-x: auto; white-space: nowrap; width: 100%; max-width: 100%; box-sizing: border-box;'>${escapeHtml(data.kmpCode)}</div>
                         </div>
                     </div>
                 </div>
                 
                 <div style='margin-top: 15px; padding-top: 10px; border-top: 1px solid var(--border-color);'>
-                    <button onclick='deleteGradleDep("${escapeJs(data.group)}", "${escapeJs(data.artifact)}", "${escapeJs(data.version)}")' style='width: 100%; padding: 8px; border-radius: 4px; background: #e74c3c; border: none; color: white; font-weight: bold; cursor: pointer; transition: background 0.15s;'>🗑️ 安全清空当前依赖库版本</button>
+                    <button onclick='deleteGradleDep("${escapeJs(data.group)}", "${escapeJs(data.artifact)}", "${escapeJs(data.version)}")' style='width: 100%; padding: 8px; border-radius: 4px; background: #e74c3c; border: none; color: white; font-weight: bold; cursor: pointer; transition: background 0.15s;'>${t('gradle_js_btn_clean_dep')}</button>
                 </div>
             `;
 
             pane.innerHTML = html;
         })
         .catch(err => {
-            pane.innerHTML = `<div style="color: #e74c3c; padding: 20px;">❌ 载入依赖失败: ${err.message}</div>`;
+            pane.innerHTML = `<div style="color: #e74c3c; padding: 20px;">${t('gradle_js_dep_load_fail', err.message)}</div>`;
         });
 }
 
 function deleteGradleDep(group, name, version) {
-    if (!confirm(`⚠️ 警告：您确定要物理清空已缓存的依赖库：\n\n${group}:${name}:${version}\n\n此操作将彻底删除此版本的物理文件夹。\n【安全设计】它只会安全清空该特定版本的文件夹，绝不递归删除任何级联的其它关联依赖库，防止破坏全局依赖。您确认要执行吗？`)) {
+    if (!confirm(t('gradle_js_confirm_delete_dep', group, name, version))) {
         return;
     }
 
@@ -1650,21 +2130,21 @@ function deleteGradleDep(group, name, version) {
         .then(res => res.json())
         .then(data => {
             if (data.success) {
-                alert('✅ 该依赖库版本已被安全物理清理！');
+                alert(t('gradle_js_delete_dep_success'));
                 document.getElementById('gradle-preview-body').innerHTML = `
                     <div style='text-align: center; color: var(--text-muted); margin-top: 40px; padding: 10px;'>
                         <span style='font-size: 2.5rem; display: block; margin-bottom: 12px;'>✓</span>
-                        依赖库已删除成功。重新检索列表中。
+                        ${t('gradle_js_delete_dep_success')}
                     </div>
                 `;
                 loadGradleInfo();
                 onGradleSearchChange();
             } else {
-                alert('❌ 删除依赖库失败: ' + data.message);
+                alert(t('gradle_js_delete_dep_fail', data.message));
             }
         })
         .catch(err => {
-            alert('❌ 删除依赖库失败: ' + err.message);
+            alert(t('gradle_js_delete_dep_fail', err.message));
         });
 }
 
@@ -1689,18 +2169,18 @@ function showVersionsModal(event, group, artifact) {
     const body = document.getElementById('versions-modal-body');
     
     if (modal && title && body) {
-        title.innerHTML = `📦 <strong>${escapeHtml(artifact)}</strong> 的本地缓存版本列表`;
+        title.innerHTML = t('gradle_js_modal_versions_title', escapeHtml(artifact));
         
         let html = `
             <div style='margin-bottom: 12px; font-size: 0.85rem; color: var(--text-muted);'>
-                分组 Group: <span style='font-family: monospace;'>${escapeHtml(group)}</span>
+                ${t('gradle_js_modal_group')} <span style='font-family: monospace;'>${escapeHtml(group)}</span>
             </div>
             <table class='file-table' style='width: 100%; border-collapse: collapse; margin-top: 10px;'>
                 <thead>
                     <tr style='background: var(--bg-color); border-bottom: 1px solid var(--border-color); text-align: left;'>
-                        <th style='padding: 6px 10px; font-size: 0.85rem;'>版本号</th>
-                        <th style='padding: 6px 10px; font-size: 0.85rem;'>大小</th>
-                        <th style='padding: 6px 10px; text-align: right; font-size: 0.85rem;'>操作</th>
+                        <th style='padding: 6px 10px; font-size: 0.85rem;'>${t('gradle_th_version')}</th>
+                        <th style='padding: 6px 10px; font-size: 0.85rem;'>${t('gradle_th_size')}</th>
+                        <th style='padding: 6px 10px; text-align: right; font-size: 0.85rem;'>${t('th_actions')}</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1712,13 +2192,13 @@ function showVersionsModal(event, group, artifact) {
             html += `
                 <tr style='border-bottom: 1px solid var(--border-color);'>
                     <td style='padding: 8px 10px; font-weight: bold; font-family: monospace; font-size: 0.85rem;'>
-                        <span onclick="showVersionFilesModal(event, '${escapeJs(group)}', '${escapeJs(artifact)}', '${escapeJs(v.version)}')" style='color: var(--accent-hover); text-decoration: underline; cursor: pointer;' title='点击查看版本缓存的所有文件详情'>${escapeHtml(v.version)}</span>
+                        <span onclick="showVersionFilesModal(event, '${escapeJs(group)}', '${escapeJs(artifact)}', '${escapeJs(v.version)}')" style='color: var(--accent-hover); text-decoration: underline; cursor: pointer;' title='${escapeHtml(t('gradle_modal_files'))}'>${escapeHtml(v.version)}</span>
                     </td>
                     <td style='padding: 8px 10px; font-size: 0.85rem; color: var(--text-muted);'>${v.size}</td>
                     <td style='padding: 8px 10px; text-align: right; display: flex; justify-content: flex-end; gap: 6px;'>
-                        <button onclick='copyToClipboard(this, "${escapeJs(v.path)}")' class='btn' style='padding: 2px 6px; font-size: 0.75rem; cursor: pointer;' title='复制绝对缓存路径'>📋 复制路径</button>
-                        <button onclick='openInExplorer("${escapeJs(v.path)}")' class='btn' style='padding: 2px 6px; font-size: 0.75rem; cursor: pointer;' title='在系统文件夹中定位'>📂 定位</button>
-                        <button onclick='deleteGradleDepFromModal("${escapeJs(group)}", "${escapeJs(artifact)}", "${escapeJs(v.version)}")' class='btn' style='padding: 2px 6px; font-size: 0.75rem; cursor: pointer; background: rgba(231, 76, 60, 0.1); border: 1px solid rgba(231, 76, 60, 0.3); color: #e74c3c;' title='安全物理清理此特定版本缓存'>🗑️ 删除</button>
+                        <button onclick='copyToClipboard(this, "${escapeJs(v.path)}")' class='btn' style='padding: 2px 6px; font-size: 0.75rem; cursor: pointer;' title='${escapeHtml(t('btn_copy_path'))}'>${t('btn_copy_path')}</button>
+                        <button onclick='openInExplorer("${escapeJs(v.path)}")' class='btn' style='padding: 2px 6px; font-size: 0.75rem; cursor: pointer;' title='${escapeHtml(t('btn_locate'))}'>${t('btn_locate')}</button>
+                        <button onclick='deleteGradleDepFromModal("${escapeJs(group)}", "${escapeJs(artifact)}", "${escapeJs(v.version)}")' class='btn' style='padding: 2px 6px; font-size: 0.75rem; cursor: pointer; background: rgba(231, 76, 60, 0.1); border: 1px solid rgba(231, 76, 60, 0.3); color: #e74c3c;' title='${escapeHtml(t('btn_delete'))}'>${t('btn_delete')}</button>
                     </td>
                 </tr>
             `;
@@ -1751,17 +2231,17 @@ function showDepsListModal(event) {
     const body = document.getElementById('dependencies-modal-body');
     
     if (modal && title && body) {
-        title.innerHTML = `🔗 <strong>${escapeHtml(currentPreviewArtifactName)}</strong> 的完整级联依赖集`;
+        title.innerHTML = t('gradle_js_modal_deps_title', escapeHtml(currentPreviewArtifactName));
         
         let html = `
             <div style='margin-bottom: 12px; font-size: 0.85rem; color: var(--text-muted);'>
-                共包含 ${currentPreviewDeps.length} 个直接和级联依赖项：
+                ${t('gradle_js_modal_deps_summary', currentPreviewDeps.length)}
             </div>
             <table class='file-table' style='width: 100%; border-collapse: collapse;'>
                 <thead>
                     <tr style='background: var(--bg-color); border-bottom: 1px solid var(--border-color); text-align: left;'>
-                        <th style='padding: 6px 10px; font-size: 0.85rem;'>依赖库坐标 (GroupId : ArtifactId : Version)</th>
-                        <th style='padding: 6px 10px; font-size: 0.85rem; text-align: right; width: 100px;'>缓存状态</th>
+                        <th style='padding: 6px 10px; font-size: 0.85rem;'>${t('gradle_th_coord_full')}</th>
+                        <th style='padding: 6px 10px; font-size: 0.85rem; text-align: right; width: 100px;'>${t('gradle_th_cache_status')}</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1774,7 +2254,7 @@ function showDepsListModal(event) {
                         <span style='color: var(--text-muted);'>${escapeHtml(dep.group)}:</span><strong>${escapeHtml(dep.artifact)}</strong>:<span style='color: var(--accent-hover);'>${escapeHtml(dep.version)}</span>
                     </td>
                     <td style='padding: 8px 10px; text-align: right; font-size: 0.8rem;'>
-                        ${dep.isDownloaded ? '<span style="color: #2ecc71; font-weight: bold;">✓ 已缓存</span>' : '<span style="color: #e67e22; font-weight: bold;">⚠ 未缓存</span>'}
+                        ${dep.isDownloaded ? `<span style="color: #2ecc71; font-weight: bold;">${t('gradle_js_cached_yes')}</span>` : `<span style="color: #e67e22; font-weight: bold;">${t('gradle_js_cached_no')}</span>`}
                     </td>
                 </tr>
             `;
@@ -1806,11 +2286,11 @@ function initProtocolSwitcher() {
 
     const isHttps = window.location.protocol === 'https:';
     if (isHttps) {
-        btn.innerHTML = '🌐 明文';
-        btn.title = '一键切换到 HTTP 极速通道 (端口: ' + httpPort + ')';
+        btn.innerHTML = t('proto_btn_http');
+        btn.title = t('proto_toggle_to_http', httpPort);
     } else {
-        btn.innerHTML = '🔒 密文';
-        btn.title = '一键切换到 HTTPS 安全沙箱 (端口: ' + httpsPort + ')';
+        btn.innerHTML = t('proto_btn_https');
+        btn.title = t('proto_toggle_to_https', httpsPort);
     }
 }
 
@@ -1838,7 +2318,7 @@ function toggleProtocol(event) {
 }
 
 function deleteGradleDepFromModal(group, name, version) {
-    if (!confirm(`⚠️ 警告：您确定要物理清空已缓存的依赖库：\n\n${group}:${name}:${version}\n\n此操作将彻底删除此版本的物理文件夹。\n【安全设计】它只会安全清空该特定版本的文件夹，绝不递归删除任何级联的其它关联依赖。您确认要执行吗？`)) {
+    if (!confirm(t('gradle_js_confirm_delete_dep', group, name, version))) {
         return;
     }
 
@@ -1846,16 +2326,16 @@ function deleteGradleDepFromModal(group, name, version) {
         .then(res => res.json())
         .then(data => {
             if (data.success) {
-                alert('✅ 该依赖库版本已被安全物理清理！');
+                alert(t('gradle_js_delete_dep_success'));
                 loadGradleInfo();
                 onGradleSearchChange();
                 closeVersionsModal();
             } else {
-                alert('❌ 删除依赖库失败: ' + data.message);
+                alert(t('gradle_js_delete_dep_fail', data.message));
             }
         })
         .catch(err => {
-            alert('❌ 删除依赖库失败: ' + err.message);
+            alert(t('gradle_js_delete_dep_fail', err.message));
         });
 }
 
@@ -1870,21 +2350,21 @@ function showVersionFilesModal(event, group, artifact, version) {
     const body = document.getElementById('files-modal-body');
     
     if (modal && title && body) {
-        body.innerHTML = '<div style="text-align: center; padding: 30px; color: var(--text-muted);">🔄 正在扫描并载入已下载文件列表...</div>';
+        body.innerHTML = `<div style="text-align: center; padding: 30px; color: var(--text-muted);">${t('gradle_js_modal_files_loading')}</div>`;
         modal.style.display = 'flex';
 
-        title.innerHTML = `📄 <strong>${escapeHtml(artifact)}:${escapeHtml(version)}</strong> 已下载文件列表`;
+        title.innerHTML = t('gradle_js_modal_files_title', escapeHtml(artifact), escapeHtml(version));
 
         fetch(`/api/gradle/version-files?group=${encodeURIComponent(group)}&name=${encodeURIComponent(artifact)}&version=${encodeURIComponent(version)}`)
             .then(res => res.json())
             .then(data => {
                 if (!data.success) {
-                    body.innerHTML = `<div style="color: #e74c3c; padding: 20px;">❌ 载入文件列表失败: ${data.message}</div>`;
+                    body.innerHTML = `<div style="color: #e74c3c; padding: 20px;">${t('gradle_js_modal_files_fail', data.message)}</div>`;
                     return;
                 }
 
                 if (!data.files || data.files.length === 0) {
-                    body.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 20px;">📭 该版本目录内暂无缓存文件</div>';
+                    body.innerHTML = `<div style="color: var(--text-muted); text-align: center; padding: 20px;">${t('gradle_js_modal_files_empty')}</div>`;
                     return;
                 }
 
@@ -1892,9 +2372,9 @@ function showVersionFilesModal(event, group, artifact, version) {
                     <table class='file-table' style='width: 100%; border-collapse: collapse; margin-top: 5px;'>
                         <thead>
                             <tr style='background: var(--bg-color); border-bottom: 1px solid var(--border-color); text-align: left;'>
-                                <th style='padding: 6px 10px; font-size: 0.85rem;'>文件名</th>
-                                <th style='padding: 6px 10px; font-size: 0.85rem;'>大小</th>
-                                <th style='padding: 6px 10px; text-align: right; font-size: 0.85rem;'>动作</th>
+                                <th style='padding: 6px 10px; font-size: 0.85rem;'>${t('th_filename')}</th>
+                                <th style='padding: 6px 10px; font-size: 0.85rem;'>${t('gradle_th_size')}</th>
+                                <th style='padding: 6px 10px; text-align: right; font-size: 0.85rem;'>${t('th_actions')}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1906,8 +2386,8 @@ function showVersionFilesModal(event, group, artifact, version) {
                             <td style='padding: 8px 10px; font-family: monospace; font-size: 0.8rem; word-break: break-all;' title='${escapeHtml(f.path)}'>📄 ${escapeHtml(f.name)}</td>
                             <td style='padding: 8px 10px; font-size: 0.8rem; color: var(--text-muted); white-space: nowrap;'>${f.size}</td>
                             <td style='padding: 8px 10px; text-align: right; display: flex; justify-content: flex-end; gap: 6px; white-space: nowrap;'>
-                                <button onclick='copyToClipboard(this, "${escapeJs(f.path)}")' class='btn' style='padding: 2px 6px; font-size: 0.75rem; cursor: pointer;' title='复制该文件的物理绝对路径'>📋 复制路径</button>
-                                <button onclick='openInExplorer("${escapeJs(f.path)}")' class='btn' style='padding: 2px 6px; font-size: 0.75rem; cursor: pointer;' title='在系统文件夹中定位该文件'>📂 定位</button>
+                                <button onclick='copyToClipboard(this, "${escapeJs(f.path)}")' class='btn' style='padding: 2px 6px; font-size: 0.75rem; cursor: pointer;' title='${escapeHtml(t('btn_copy_path'))}'>${t('btn_copy_path')}</button>
+                                <button onclick='openInExplorer("${escapeJs(f.path)}")' class='btn' style='padding: 2px 6px; font-size: 0.75rem; cursor: pointer;' title='${escapeHtml(t('btn_locate'))}'>${t('btn_locate')}</button>
                             </td>
                         </tr>
                     `;
@@ -1920,7 +2400,7 @@ function showVersionFilesModal(event, group, artifact, version) {
                 body.innerHTML = html;
             })
             .catch(err => {
-                body.innerHTML = `<div style="color: #e74c3c; padding: 20px;">❌ 载入文件列表失败: ${err.message}</div>`;
+                body.innerHTML = `<div style="color: #e74c3c; padding: 20px;">${t('gradle_js_modal_files_fail', err.message)}</div>`;
             });
     }
 }

@@ -46,7 +46,7 @@ namespace LocalDiskServer
                 {
                     logsList.Clear();
                 }
-                Log("系统运行日志已由用户清空");
+                Log(I18nManager.T("log_cleared"));
                 HttpServer.ServeJson(response, 200, "{\"success\":true}");
                 return true;
             }

@@ -8,10 +8,223 @@ using System.Diagnostics;
 
 namespace LocalDiskServer
 {
+    public class QuickAccessItem
+    {
+        public string Key { get; set; }
+        public string Emoji { get; set; }
+        public string Title { get; set; }
+        public string Description { get; set; }
+        public string PhysicalPath { get; set; }
+        public string WebPath { get; set; }
+    }
+
     public static class FileExplorer
     {
         public static readonly List<string> clipboardPaths = new List<string>();
         public static bool isClipboardCut = false;
+
+        public static List<QuickAccessItem> GetStandardQuickAccessItems()
+        {
+            var list = new List<QuickAccessItem>();
+
+            // 1. Desktop (桌面)
+            string desktop = ResolveSystemPath("Desktop", "Desktop", Environment.SpecialFolder.Desktop, "Desktop");
+            if (!string.IsNullOrEmpty(desktop) && Directory.Exists(desktop))
+            {
+                list.Add(new QuickAccessItem
+                {
+                    Key = "desktop",
+                    Emoji = "🖥️",
+                    Title = I18nManager.T("quick_desktop"),
+                    Description = I18nManager.T("quick_desktop_desc"),
+                    PhysicalPath = desktop,
+                    WebPath = HttpServer.PhysicalToWebPath(desktop)
+                });
+            }
+
+            // 2. Downloads (下载 - GUID: {374DE290-123F-4565-9164-39C4925E467B})
+            string downloads = ResolveSystemPath("{374DE290-123F-4565-9164-39C4925E467B}", "{374DE290-123F-4565-9164-39C4925E467B}", (Environment.SpecialFolder)(-1), "Downloads");
+            if (string.IsNullOrEmpty(downloads) || !Directory.Exists(downloads))
+            {
+                downloads = ResolveSystemPath("{7D83EE9B-2244-4E70-B1F5-5393042AF1E4}", "{7D83EE9B-2244-4E70-B1F5-5393042AF1E4}", (Environment.SpecialFolder)(-1), "Downloads");
+            }
+            if (!string.IsNullOrEmpty(downloads) && Directory.Exists(downloads))
+            {
+                list.Add(new QuickAccessItem
+                {
+                    Key = "downloads",
+                    Emoji = "📥",
+                    Title = I18nManager.T("quick_downloads"),
+                    Description = I18nManager.T("quick_downloads_desc"),
+                    PhysicalPath = downloads,
+                    WebPath = HttpServer.PhysicalToWebPath(downloads)
+                });
+            }
+
+            // 3. Documents (文档)
+            string docs = ResolveSystemPath("Personal", "Personal", Environment.SpecialFolder.MyDocuments, "Documents");
+            if (!string.IsNullOrEmpty(docs) && Directory.Exists(docs))
+            {
+                list.Add(new QuickAccessItem
+                {
+                    Key = "documents",
+                    Emoji = "📁",
+                    Title = I18nManager.T("quick_documents"),
+                    Description = I18nManager.T("quick_documents_desc"),
+                    PhysicalPath = docs,
+                    WebPath = HttpServer.PhysicalToWebPath(docs)
+                });
+            }
+
+            // 4. Pictures (图片)
+            string pictures = ResolveSystemPath("My Pictures", "My Pictures", Environment.SpecialFolder.MyPictures, "Pictures");
+            if (!string.IsNullOrEmpty(pictures) && Directory.Exists(pictures))
+            {
+                list.Add(new QuickAccessItem
+                {
+                    Key = "pictures",
+                    Emoji = "🖼️",
+                    Title = I18nManager.T("quick_pictures"),
+                    Description = I18nManager.T("quick_pictures_desc"),
+                    PhysicalPath = pictures,
+                    WebPath = HttpServer.PhysicalToWebPath(pictures)
+                });
+            }
+
+            // 5. Music (音乐)
+            string music = ResolveSystemPath("My Music", "My Music", Environment.SpecialFolder.MyMusic, "Music");
+            if (!string.IsNullOrEmpty(music) && Directory.Exists(music))
+            {
+                list.Add(new QuickAccessItem
+                {
+                    Key = "music",
+                    Emoji = "🎵",
+                    Title = I18nManager.T("quick_music"),
+                    Description = I18nManager.T("quick_music_desc"),
+                    PhysicalPath = music,
+                    WebPath = HttpServer.PhysicalToWebPath(music)
+                });
+            }
+
+            // 6. Videos (视频)
+            string videos = ResolveSystemPath("My Video", "My Video", Environment.SpecialFolder.MyVideos, "Videos");
+            if (!string.IsNullOrEmpty(videos) && Directory.Exists(videos))
+            {
+                list.Add(new QuickAccessItem
+                {
+                    Key = "videos",
+                    Emoji = "🎬",
+                    Title = I18nManager.T("quick_videos"),
+                    Description = I18nManager.T("quick_videos_desc"),
+                    PhysicalPath = videos,
+                    WebPath = HttpServer.PhysicalToWebPath(videos)
+                });
+            }
+
+            // 7. User Profile (用户个人根目录)
+            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrEmpty(userProfile) && Directory.Exists(userProfile))
+            {
+                list.Add(new QuickAccessItem
+                {
+                    Key = "user_profile",
+                    Emoji = "👤",
+                    Title = I18nManager.T("quick_user_profile"),
+                    Description = I18nManager.T("quick_user_profile_desc"),
+                    PhysicalPath = userProfile,
+                    WebPath = HttpServer.PhysicalToWebPath(userProfile)
+                });
+            }
+
+            // 8. Temp (临时文件夹)
+            string temp = Path.GetTempPath();
+            if (!string.IsNullOrEmpty(temp))
+            {
+                temp = temp.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (Directory.Exists(temp))
+                {
+                    list.Add(new QuickAccessItem
+                    {
+                        Key = "temp",
+                        Emoji = "⚡",
+                        Title = I18nManager.T("quick_temp"),
+                        Description = I18nManager.T("quick_temp_desc"),
+                        PhysicalPath = temp,
+                        WebPath = HttpServer.PhysicalToWebPath(temp)
+                    });
+                }
+            }
+
+            return list;
+        }
+
+        private static string ResolveSystemPath(string userShellFoldersKey, string shellFoldersKey, Environment.SpecialFolder specialFolder, string fallbackSubDir)
+        {
+            string path = null;
+
+            // 1. 优先查 HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders (支持用户自定义重定向)
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"))
+                {
+                    if (key != null && !string.IsNullOrEmpty(userShellFoldersKey))
+                    {
+                        object val = key.GetValue(userShellFoldersKey);
+                        if (val != null)
+                        {
+                            string raw = val.ToString();
+                            path = Environment.ExpandEnvironmentVariables(raw);
+                            if (Directory.Exists(path)) return path;
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // 2. 查 HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders"))
+                {
+                    if (key != null && !string.IsNullOrEmpty(shellFoldersKey))
+                    {
+                        object val = key.GetValue(shellFoldersKey);
+                        if (val != null)
+                        {
+                            string raw = val.ToString();
+                            path = Environment.ExpandEnvironmentVariables(raw);
+                            if (Directory.Exists(path)) return path;
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // 3. 查 SpecialFolder
+            try
+            {
+                if ((int)specialFolder >= 0)
+                {
+                    path = Environment.GetFolderPath(specialFolder);
+                    if (!string.IsNullOrEmpty(path) && Directory.Exists(path)) return path;
+                }
+            }
+            catch { }
+
+            // 4. 回退到 %USERPROFILE%\<fallbackSubDir>
+            if (!string.IsNullOrEmpty(fallbackSubDir))
+            {
+                try
+                {
+                    string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                    string fb = Path.Combine(userProfile, fallbackSubDir);
+                    if (Directory.Exists(fb)) return fb;
+                }
+                catch { }
+            }
+
+            return null;
+        }
 
         public static List<string> GetFavorites()
         {
@@ -76,27 +289,83 @@ namespace LocalDiskServer
             }
         }
 
+        public static string GetFileTypeDescription(string extension)
+        {
+            if (string.IsNullOrEmpty(extension))
+            {
+                return I18nManager.T("ft_file");
+            }
+            string ext = extension.TrimStart('.').ToLower();
+            string key = "ft_" + ext;
+            string desc = I18nManager.T(key);
+            if (desc != key)
+            {
+                return desc;
+            }
+
+            switch (ext)
+            {
+                case "doc": return I18nManager.T("ft_doc");
+                case "docx": return I18nManager.T("ft_docx");
+                case "xls":
+                case "xlsx":
+                case "csv": return I18nManager.T("ft_xls");
+                case "ppt":
+                case "pptx": return I18nManager.T("ft_ppt");
+                case "jpg":
+                case "jpeg": return I18nManager.T("ft_jpg");
+                case "zip":
+                case "rar":
+                case "7z":
+                case "tar":
+                case "gz": return I18nManager.T("ft_zip");
+                case "bat":
+                case "cmd": return I18nManager.T("ft_bat");
+                case "conf":
+                case "cfg": return I18nManager.T("ft_ini");
+                case "yaml":
+                case "yml": return I18nManager.T("ft_yml");
+                case "kt":
+                case "kts": return I18nManager.T("ft_kt");
+                case "cpp":
+                case "c":
+                case "h": return I18nManager.T("ft_cpp");
+                case "htm":
+                case "html": return I18nManager.T("ft_html");
+                case "mov":
+                case "mkv":
+                case "avi": return I18nManager.T("ft_video");
+                case "wav":
+                case "flac":
+                case "aac": return I18nManager.T("ft_audio");
+                default:
+                    return I18nManager.T("type_file_suffix", ext.ToUpper());
+            }
+        }
+
         public static void ServeDirectory(HttpListenerResponse response, string dirPath, string webPath)
         {
             var favList = GetFavorites();
             StringBuilder sb = new StringBuilder();
-            sb.Append(HttpServer.GetHtmlHeader("目录: " + dirPath, webPath, "layout-explorer"));
+            string folderName = Path.GetFileName(dirPath);
+            if (string.IsNullOrEmpty(folderName)) folderName = dirPath;
+            sb.Append(HttpServer.GetHtmlHeader(I18nManager.T("explorer_page_title", folderName), webPath, "layout-explorer"));
             sb.AppendFormat("<script>const currentDirPath = '{0}';</script>", dirPath.Replace("\\", "\\\\").Replace("'", "\\'"));
 
             string[] parts = webPath.Split(new char[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
 
             // Left Sidebar Tree Pane
             sb.Append("<div class='explorer-sidebar' id='sidebar-pane'>");
-            sb.Append("  <div class='sidebar-expand-btn' onclick='toggleSidebar(\"left\")' style='display: none;'>▶ 导 航</div>");
+            sb.AppendFormat("  <div class='sidebar-expand-btn' onclick='toggleSidebar(\"left\")' style='display: none;'>{0}</div>", I18nManager.T("nav_btn_expand"));
             sb.Append("  <div class='sidebar-title' style='display: flex; justify-content: space-between; align-items: center; width: 100%;'>");
-            sb.Append("    <span>📂 导航目录</span>");
-            sb.Append("    <span class='sidebar-toggle-btn' onclick='toggleSidebar(\"left\"); event.stopPropagation();' style='cursor: pointer; font-size: 0.8rem; color: var(--text-muted); padding: 2px 6px; border-radius: 4px;' title='收起左栏'>◀</span>");
+            sb.AppendFormat("    <span>📂 {0}</span>", I18nManager.T("nav_title"));
+            sb.AppendFormat("    <span class='sidebar-toggle-btn' onclick='toggleSidebar(\"left\"); event.stopPropagation();' style='cursor: pointer; font-size: 0.8rem; color: var(--text-muted); padding: 2px 6px; border-radius: 4px;' title='{0}'>◀</span>", I18nManager.T("nav_btn_collapse"));
             sb.Append("  </div>");
             sb.Append("  <div class='tree-container'>");
             
             // 1. Home Node
             sb.Append("    <div class='tree-node root-node'>");
-            sb.Append("      <a href='/' class='tree-link'>🏠 导航主页</a>");
+            sb.AppendFormat("      <a href='/' class='tree-link'>🏠 {0}</a>", I18nManager.T("nav_home"));
             sb.Append("    </div>");
 
             // 2. Quick Access Node
@@ -104,29 +373,17 @@ namespace LocalDiskServer
             sb.Append("      <div class='tree-row' onclick='toggleTreeNode(\"quick-access\")'>");
             sb.Append("        <span class='tree-arrow'>▼</span>");
             sb.Append("        <span class='tree-folder-icon'>🚀</span>");
-            sb.Append("        <span class='tree-text'>常用快速访问</span>");
+            sb.AppendFormat("        <span class='tree-text'>{0}</span>", I18nManager.T("quick_access_title"));
             sb.Append("      </div>");
             sb.Append("      <div class='tree-children' id='children-quick-access'>");
 
-            string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-            if (Directory.Exists(desktopPath))
-                sb.AppendFormat("        <a href='/c/Users/{0}/Desktop/' class='tree-link{1}' title='{2}'>🖥️ 桌面</a>", 
-                    Environment.UserName, dirPath.Equals(desktopPath, StringComparison.OrdinalIgnoreCase) ? " active-node" : "", desktopPath.Replace("'", "\'"));
-            
-            string downloadsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
-            if (Directory.Exists(downloadsPath))
-                sb.AppendFormat("        <a href='/c/Users/{0}/Downloads/' class='tree-link{1}' title='{2}'>📥 下载</a>", 
-                    Environment.UserName, dirPath.Equals(downloadsPath, StringComparison.OrdinalIgnoreCase) ? " active-node" : "", downloadsPath.Replace("'", "\'"));
-
-            string docsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            if (Directory.Exists(docsPath))
-                sb.AppendFormat("        <a href='/c/Users/{0}/Documents/' class='tree-link{1}' title='{2}'>📁 我的文档</a>", 
-                    Environment.UserName, dirPath.Equals(docsPath, StringComparison.OrdinalIgnoreCase) ? " active-node" : "", docsPath.Replace("'", "\'"));
-
-            string profilePath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (Directory.Exists(profilePath))
-                sb.AppendFormat("        <a href='/c/Users/{0}/' class='tree-link{1}' title='{2}'>👤 用户主目录</a>", 
-                    Environment.UserName, dirPath.Equals(profilePath, StringComparison.OrdinalIgnoreCase) ? " active-node" : "", profilePath.Replace("'", "\'"));
+            var quickItems = GetStandardQuickAccessItems();
+            foreach (var q in quickItems)
+            {
+                bool isActive = dirPath.Equals(q.PhysicalPath, StringComparison.OrdinalIgnoreCase);
+                sb.AppendFormat("        <a href='{0}' class='tree-link{1}' title='{2}'>{3} {4}</a>",
+                    q.WebPath, isActive ? " active-node" : "", q.PhysicalPath.Replace("'", "\'"), q.Emoji, q.Title);
+            }
 
             sb.Append("      </div>");
             sb.Append("    </div>");
@@ -136,7 +393,7 @@ namespace LocalDiskServer
             sb.Append("      <div class='tree-row' onclick='toggleTreeNode(\"favorites\")'>");
             sb.Append("        <span class='tree-arrow'>▼</span>");
             sb.Append("        <span class='tree-folder-icon'>⭐</span>");
-            sb.Append("        <span class='tree-text'>我的收藏夹</span>");
+            sb.AppendFormat("        <span class='tree-text'>{0}</span>", I18nManager.T("nav_favorites"));
             sb.Append("      </div>");
             sb.Append("      <div class='tree-children' id='children-favorites'>");
             foreach (string fav in favList)
@@ -158,7 +415,7 @@ namespace LocalDiskServer
             sb.Append("      <div class='tree-row' onclick='toggleTreeNode(\"drives\")'>");
             sb.Append("        <span class='tree-arrow'>▼</span>");
             sb.Append("        <span class='tree-folder-icon'>💾</span>");
-            sb.Append("        <span class='tree-text'>物理磁盘分区</span>");
+            sb.AppendFormat("        <span class='tree-text'>{0}</span>", I18nManager.T("nav_drives"));
             sb.Append("      </div>");
             sb.Append("      <div class='tree-children' id='children-drives'>");
             var drives = DriveInfo.GetDrives();
@@ -185,7 +442,7 @@ namespace LocalDiskServer
 
             // 5. Gradle Analyzer Node
             sb.Append("    <div class='tree-node root-node' style='margin-top: 10px; border-top: 1px solid var(--border-color); padding-top: 8px;'>");
-            sb.Append("      <a href='/?view=gradle' class='tree-link' style='font-weight: bold;'>☕ Gradle 依赖管理</a>");
+            sb.AppendFormat("      <a href='/?view=gradle' class='tree-link' style='font-weight: bold;'>☕ {0}</a>", I18nManager.T("nav_gradle"));
             sb.Append("    </div>");
 
             sb.Append("  </div>");
@@ -206,14 +463,14 @@ namespace LocalDiskServer
                 {
                     parentLink = "/" + string.Join("/", parts, 0, parts.Length - 1) + "/";
                 }
-                sb.AppendFormat("    <a href='{0}' class='btn-back'>⬅ 返回</a>", parentLink);
+                sb.AppendFormat("    <a href='{0}' class='btn-back' title='{1}'>⬅ {2}</a>", parentLink, I18nManager.T("toolbar_up_title"), I18nManager.T("toolbar_up"));
                 sb.Append("    <span class='toolbar-separator'>|</span>");
             }
 
             // Breadcrumbs Path & Address Bar Wrapper
             sb.Append("    <div class='address-bar-wrapper' onmousedown='activateAddressInput(event)'>");
             sb.Append("      <div class='breadcrumbs' id='breadcrumbs-bar'>");
-            sb.Append("        <a href='/'>计算机</a>");
+            sb.AppendFormat("        <a href='/'>{0}</a>", I18nManager.T("nav_home"));
             string runningPath = "";
             for (int i = 0; i < parts.Length; i++)
             {
@@ -236,26 +493,38 @@ namespace LocalDiskServer
             sb.Append("      </div>");
             sb.Append("      <input type='text' id='address-input' style='display: none;' onkeydown='handleAddressKey(event)' onblur='deactivateAddressInput()'>");
             sb.Append("    </div>");
-            sb.Append("    <button id='protocol-switch-btn' onclick='toggleProtocol(event)' class='btn-back' style='height: 32px; padding: 0 10px; margin-left: 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px; flex-shrink: 0;' title='一键切换 HTTP / HTTPS 安全沙箱协议'></button>");
+            sb.AppendFormat("    <button id='protocol-switch-btn' onclick='toggleProtocol(event)' class='btn-back' style='height: 32px; padding: 0 10px; margin-left: 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px; flex-shrink: 0;' title='{0}'></button>", I18nManager.T("lobby_proto_toggle_title"));
             sb.Append("  </div>");
 
             // Search Bar and View Switcher on the Right
             sb.Append("  <div class='toolbar-right' style='display: flex; align-items: center; gap: 8px;'>");
             sb.Append("    <select id='view-select' onchange='setViewMode(this.value)' style='height: 32px; background: var(--container-bg); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 8px; cursor: pointer; outline: none; font-size: 0.85rem;'>");
-            sb.Append("      <option value='details'>📋 详细信息</option>");
-            sb.Append("      <option value='large'>🔲 大图标</option>");
-            sb.Append("      <option value='medium'>⚃ 中等图标</option>");
+            sb.AppendFormat("      <option value='details'>{0}</option>", I18nManager.T("lobby_view_details"));
+            sb.AppendFormat("      <option value='large'>{0}</option>", I18nManager.T("lobby_view_large"));
+            sb.AppendFormat("      <option value='medium'>{0}</option>", I18nManager.T("lobby_view_medium"));
             sb.Append("    </select>");
-            sb.Append("    <input type='text' id='search' placeholder='🔎 快速筛选当前目录...' oninput='filterList()'>");
+            sb.AppendFormat("    <input type='text' id='search' placeholder='{0}' oninput='filterList()'>", I18nManager.T("toolbar_search_placeholder"));
             sb.Append("  </div>");
-            sb.Append("</div>");
+            sb.Append("</div>"); // Close toolbar
 
+            // Scrollable Content Area (Toolbar remains fixed above)
+            sb.Append("<div class='explorer-scroll-area'>");
             sb.Append("<table id='file-table'>");
-            sb.Append("<thead><tr><th>名称</th><th style='width: 45px; text-align: center;'>收藏</th><th style='width: 150px;'>修改时间</th><th style='width: 120px; text-align: right;'>大小</th></tr></thead>");
+            sb.Append("<thead><tr>");
+            sb.AppendFormat("  <th class='col-sortable' data-col='name' onclick='handleHeaderSort(\"name\")' style='width: 280px;'><span class='th-label'>{0}</span> <span class='sort-arrow'></span><div class='col-resizer' onmousedown='initColResize(event, this)'></div></th>", I18nManager.T("th_name"));
+            sb.AppendFormat("  <th class='col-sortable' data-col='favorite' onclick='handleHeaderSort(\"favorite\")' style='width: 55px; text-align: center;'><span class='th-label'>{0}</span> <span class='sort-arrow'></span><div class='col-resizer' onmousedown='initColResize(event, this)'></div></th>", I18nManager.T("th_favorite"));
+            sb.AppendFormat("  <th class='col-sortable' data-col='time' onclick='handleHeaderSort(\"time\")' style='width: 155px;'><span class='th-label'>{0}</span> <span class='sort-arrow'></span><div class='col-resizer' onmousedown='initColResize(event, this)'></div></th>", I18nManager.T("th_modify_time"));
+            sb.AppendFormat("  <th class='col-sortable' data-col='type' onclick='handleHeaderSort(\"type\")' style='width: 130px;'><span class='th-label'>{0}</span> <span class='sort-arrow'></span><div class='col-resizer' onmousedown='initColResize(event, this)'></div></th>", I18nManager.T("th_type"));
+            sb.AppendFormat("  <th class='col-sortable' data-col='size' onclick='handleHeaderSort(\"size\")' style='width: 80px; text-align: right;'><span class='th-label'>{0}</span> <span class='sort-arrow'></span></th>", I18nManager.T("th_size"));
+            sb.Append("</tr></thead>");
             sb.Append("<tbody>");
 
             try
             {
+                int itemIndex = 0;
+                DateTime epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+                string folderTypeDesc = I18nManager.T("type_folder");
+
                 // List directories
                 string[] dirs = Directory.GetDirectories(dirPath);
                 foreach (string d in dirs)
@@ -265,15 +534,17 @@ namespace LocalDiskServer
                     string relativeLink = "/" + webPath.TrimEnd('/') + "/" + Uri.EscapeDataString(name) + "/";
                     bool isFav = favList.Contains(di.FullName);
                     string htmlEscapedPath = di.FullName.Replace("'", "&#39;").Replace("\"", "&quot;");
+                    long timeMs = (long)(di.LastWriteTimeUtc - epoch).TotalMilliseconds;
 
                     sb.AppendFormat(
-                        "<tr class='item-row dir-row' data-name='{0}' data-path='{1}' data-type='dir' data-favorite='{2}'>" +
-                        "  <td><a href='{3}'>{4} <span class='name-text'>{5}</span></a></td>" +
-                        "  <td style='text-align: center; width: 45px;'><span class='fav-star-btn{6}' data-path='{1}'>★</span></td>" +
-                        "  <td>{7}</td>" +
+                        "<tr class='item-row dir-row' data-name='{0}' data-path='{1}' data-type='dir' data-type-desc='{2}' data-favorite='{3}' data-time='{4}' data-size='-1' data-original-index='{5}'>" +
+                        "  <td><a href='{6}'>{7} <span class='name-text'>{8}</span></a></td>" +
+                        "  <td style='text-align: center;'><span class='fav-star-btn{9}' data-path='{1}'>★</span></td>" +
+                        "  <td>{10}</td>" +
+                        "  <td>{2}</td>" +
                         "  <td style='text-align: right;'>-</td>" +
                         "</tr>",
-                        name.ToLower(), htmlEscapedPath, isFav ? "true" : "false", relativeLink, HttpServer.GetFolderSvg(), name, isFav ? " active" : "", di.LastWriteTime.ToString("yyyy-MM-dd HH:mm"));
+                        name.ToLower(), htmlEscapedPath, folderTypeDesc, isFav ? "true" : "false", timeMs, itemIndex++, relativeLink, HttpServer.GetFolderSvg(), name, isFav ? " active" : "", di.LastWriteTime.ToString("yyyy-MM-dd HH:mm"));
                 }
 
                 // List files
@@ -287,38 +558,65 @@ namespace LocalDiskServer
                     string fileSvg = HttpServer.GetFileIconSvg(fi.Extension);
                     bool isFav = favList.Contains(fi.FullName);
                     string htmlEscapedPath = fi.FullName.Replace("'", "&#39;").Replace("\"", "&quot;");
+                    long timeMs = (long)(fi.LastWriteTimeUtc - epoch).TotalMilliseconds;
+                    string typeDesc = GetFileTypeDescription(fi.Extension);
 
                     sb.AppendFormat(
-                        "<tr class='item-row file-row' data-name='{0}' data-path='{1}' data-type='file' data-favorite='{2}'>" +
-                        "  <td><a href='{3}'>{4} <span class='name-text'>{5}</span></a></td>" +
-                        "  <td style='text-align: center; width: 45px;'><span class='fav-star-btn{6}' data-path='{1}'>★</span></td>" +
-                        "  <td>{7}</td>" +
-                        "  <td style='text-align: right;'>{8}</td>" +
+                        "<tr class='item-row file-row' data-name='{0}' data-path='{1}' data-type='file' data-type-desc='{2}' data-favorite='{3}' data-time='{4}' data-size='{5}' data-original-index='{6}'>" +
+                        "  <td><a href='{7}'>{8} <span class='name-text'>{9}</span></a></td>" +
+                        "  <td style='text-align: center;'><span class='fav-star-btn{10}' data-path='{1}'>★</span></td>" +
+                        "  <td>{11}</td>" +
+                        "  <td>{2}</td>" +
+                        "  <td style='text-align: right;'>{12}</td>" +
                         "</tr>",
-                        name.ToLower(), htmlEscapedPath, isFav ? "true" : "false", relativeLink, fileSvg, name, isFav ? " active" : "", fi.LastWriteTime.ToString("yyyy-MM-dd HH:mm"), sizeStr);
+                        name.ToLower(), htmlEscapedPath, typeDesc, isFav ? "true" : "false", timeMs, fi.Length, itemIndex++, relativeLink, fileSvg, name, isFav ? " active" : "", fi.LastWriteTime.ToString("yyyy-MM-dd HH:mm"), sizeStr);
                 }
             }
             catch (UnauthorizedAccessException)
             {
-                sb.Append("<tr><td colspan='4' style='color: #e74c3c; padding: 20px; text-align: center;'>⚠️ 访问被拒绝：无权限访问此目录。</td></tr>");
+                sb.AppendFormat("<tr><td colspan='5' style='color: #e74c3c; padding: 20px; text-align: center;'>{0}</td></tr>", WebUtility.HtmlEncode(I18nManager.T("err_access_denied_dir")));
             }
             catch (Exception ex)
             {
-                sb.AppendFormat("<tr><td colspan='4' style='color: #e74c3c; padding: 20px; text-align: center;'>⚠️ 读取目录出错: {0}</td></tr>", ex.Message);
+                sb.AppendFormat("<tr><td colspan='5' style='color: #e74c3c; padding: 20px; text-align: center;'>{0}</td></tr>", WebUtility.HtmlEncode(I18nManager.T("err_read_dir_failed", ex.Message)));
             }
 
             sb.Append("</tbody></table>");
+            sb.Append("</div>"); // Close explorer-scroll-area
+
+            // 5.5 Bottom Status Bar
+            sb.Append("<div class='explorer-statusbar' id='explorer-statusbar'>");
+            sb.Append("  <div class='status-left' id='status-left'>");
+            sb.AppendFormat("    <span id='status-count'>{0}</span>", I18nManager.T("status_total_items", 0));
+            sb.Append("    <span class='status-separator'>|</span>");
+            sb.AppendFormat("    <span id='status-detail'>{0}</span>", I18nManager.T("status_total_detail", 0, 0, "0 B"));
+            sb.Append("  </div>");
+            sb.Append("  <div class='status-right' id='status-right'>");
+            sb.AppendFormat("    <span id='status-selected'>{0}</span>", I18nManager.T("status_no_selection"));
+            sb.Append("  </div>");
+            sb.Append("</div>");
+
+            // 注入多语言状态栏词条字典供前端 JS 动态渲染使用
+            sb.Append("<script>");
+            sb.Append("window.I18N_STATUS = {");
+            sb.AppendFormat("  totalItems: '{0}',", I18nManager.T("status_total_items", "{0}"));
+            sb.AppendFormat("  totalDetail: '{0}',", I18nManager.T("status_total_detail", "{0}", "{1}", "{2}"));
+            sb.AppendFormat("  selectedItems: '{0}',", I18nManager.T("status_selected_items", "{0}", "{1}"));
+            sb.AppendFormat("  noSelection: '{0}'", I18nManager.T("status_no_selection"));
+            sb.Append("};");
+            sb.Append("</script>");
+
             sb.Append("</div>"); // Close explorer-main
 
             // 6. Right Live Preview Panel
             sb.Append("<div class='explorer-preview' id='preview-pane'>");
-            sb.Append("  <div class='preview-expand-btn' onclick='toggleSidebar(\"right\")' style='display: none;'>◀ 预 览</div>");
+            sb.AppendFormat("  <div class='preview-expand-btn' onclick='toggleSidebar(\"right\")' style='display: none;'>{0}</div>", I18nManager.T("preview_btn_expand"));
             sb.Append("  <div class='preview-title' style='display: flex; justify-content: space-between; align-items: center; width: 100%;'>");
-            sb.Append("    <span>ℹ️ 预览窗格</span>");
-            sb.Append("    <span class='preview-toggle-btn' onclick='toggleSidebar(\"right\"); event.stopPropagation();' style='cursor: pointer; font-size: 0.8rem; color: var(--text-muted); padding: 2px 6px; border-radius: 4px;' title='收起右栏'>▶</span>");
+            sb.AppendFormat("    <span>ℹ️ {0}</span>", I18nManager.T("preview_title"));
+            sb.AppendFormat("    <span class='preview-toggle-btn' onclick='toggleSidebar(\"right\"); event.stopPropagation();' style='cursor: pointer; font-size: 0.8rem; color: var(--text-muted); padding: 2px 6px; border-radius: 4px;' title='{0}'>▶</span>", I18nManager.T("preview_btn_collapse"));
             sb.Append("  </div>");
             sb.Append("  <div class='preview-content' id='preview-content'>");
-            sb.Append("    <div style='color: var(--text-muted); font-size: 0.9rem; padding-top: 40px;'>🔍 未选择任何项目</div>");
+            sb.AppendFormat("    <div style='color: var(--text-muted); font-size: 0.9rem; padding-top: 40px;'>🔍 {0}</div>", I18nManager.T("status_no_selection"));
             sb.Append("  </div>");
             sb.Append("</div>");
 
@@ -400,7 +698,7 @@ namespace LocalDiskServer
             }
             catch (Exception ex)
             {
-                HttpServer.ServeError(response, 500, "读取文本文件失败: " + ex.Message);
+                HttpServer.ServeError(response, 500, I18nManager.T("err_read_text_failed", ex.Message));
             }
             finally
             {
@@ -420,7 +718,7 @@ namespace LocalDiskServer
                     string path = request.QueryString["path"];
                     if (string.IsNullOrEmpty(path))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"Missing path\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_missing_path"))));
                         return true;
                     }
                     var favs = FileExplorer.GetFavorites();
@@ -442,7 +740,7 @@ namespace LocalDiskServer
                     string pathsStr = request.QueryString["paths"];
                     if (string.IsNullOrEmpty(pathsStr))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"Missing paths\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_missing_param"))));
                         return true;
                     }
                     string[] paths = pathsStr.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
@@ -460,7 +758,7 @@ namespace LocalDiskServer
                             count++;
                         }
                     }
-                    HttpServer.ServeJson(response, 200, string.Format("{{\"success\":true,\"message\":\"成功删除 {0} 个项目\"}}", count));
+                    HttpServer.ServeJson(response, 200, string.Format("{{\"success\":true,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_delete_success", count))));
                 }
                 else if (rawPath.Equals("api/file/rename", StringComparison.OrdinalIgnoreCase))
                 {
@@ -468,7 +766,7 @@ namespace LocalDiskServer
                     string newName = request.QueryString["newName"];
                     if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(newName))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"Missing path or newName\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_missing_param"))));
                         return true;
                     }
                     string parent = Path.GetDirectoryName(path);
@@ -476,16 +774,16 @@ namespace LocalDiskServer
                     if (File.Exists(path))
                     {
                         File.Move(path, dest);
-                        HttpServer.ServeJson(response, 200, "{\"success\":true,\"message\":\"文件重命名成功\"}");
+                        HttpServer.ServeJson(response, 200, string.Format("{{\"success\":true,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_rename_file_success"))));
                     }
                     else if (Directory.Exists(path))
                     {
                         Directory.Move(path, dest);
-                        HttpServer.ServeJson(response, 200, "{\"success\":true,\"message\":\"文件夹重命名成功\"}");
+                        HttpServer.ServeJson(response, 200, string.Format("{{\"success\":true,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_rename_folder_success"))));
                     }
                     else
                     {
-                        HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"Path not found\"}");
+                        HttpServer.ServeJson(response, 404, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_path_not_found"))));
                     }
                 }
                 else if (rawPath.Equals("api/clipboard/set", StringComparison.OrdinalIgnoreCase))
@@ -494,7 +792,7 @@ namespace LocalDiskServer
                     string action = request.QueryString["action"];
                     if (string.IsNullOrEmpty(pathsStr) || string.IsNullOrEmpty(action))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"Missing paths or action\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_missing_param"))));
                         return true;
                     }
                     FileExplorer.clipboardPaths.Clear();
@@ -514,7 +812,7 @@ namespace LocalDiskServer
                     string targetDir = request.QueryString["targetDir"];
                     if (string.IsNullOrEmpty(targetDir) || !Directory.Exists(targetDir))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"Invalid target directory\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_invalid_target_dir"))));
                         return true;
                     }
                     int count = 0;
@@ -555,20 +853,20 @@ namespace LocalDiskServer
                     {
                         FileExplorer.clipboardPaths.Clear();
                     }
-                    HttpServer.ServeJson(response, 200, string.Format("{{\"success\":true,\"message\":\"成功粘贴 {0} 个项目\"}}", count));
+                    HttpServer.ServeJson(response, 200, string.Format("{{\"success\":true,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_paste_success", count))));
                 }
                 else if (rawPath.Equals("api/file/properties", StringComparison.OrdinalIgnoreCase))
                 {
                     string pathsStr = request.QueryString["paths"];
                     if (string.IsNullOrEmpty(pathsStr))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"Missing paths\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_missing_param"))));
                         return true;
                     }
                     string[] paths = pathsStr.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
                     if (paths.Length == 0)
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"No valid paths\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_no_valid_paths"))));
                         return true;
                     }
 
@@ -641,7 +939,7 @@ namespace LocalDiskServer
                         }
                         else
                         {
-                            HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"路径不存在\"}");
+                            HttpServer.ServeJson(response, 404, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_path_not_found"))));
                         }
                     }
                     else
@@ -701,12 +999,12 @@ namespace LocalDiskServer
                     string pathStr = request.QueryString["path"];
                     if (string.IsNullOrEmpty(pathStr))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"缺少路径参数\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_missing_path"))));
                         return true;
                     }
                     if (!File.Exists(pathStr) && !Directory.Exists(pathStr))
                     {
-                        HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"路径不存在\"}");
+                        HttpServer.ServeJson(response, 404, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_path_not_found"))));
                         return true;
                     }
                     try
@@ -723,12 +1021,12 @@ namespace LocalDiskServer
                             psi.UseShellExecute = true;
                         }
                         System.Diagnostics.Process.Start(psi);
-                        Logger.Log(string.Format("在宿主电脑上定位/打开项目: {0}", pathStr));
+                        Logger.Log(I18nManager.T("log_host_locate", pathStr));
                         HttpServer.ServeJson(response, 200, "{\"success\":true}");
                     }
                     catch (Exception ex)
                     {
-                        Logger.Log(string.Format("在宿主电脑上打开项目失败: {0}, 错误: {1}", pathStr, ex.Message));
+                        Logger.Log(I18nManager.T("log_host_locate_failed", pathStr, ex.Message));
                         HttpServer.ServeJson(response, 500, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(ex.Message)));
                     }
                 }
@@ -757,7 +1055,7 @@ namespace LocalDiskServer
                         }
                         else
                         {
-                            HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"路径不存在\"}");
+                            HttpServer.ServeJson(response, 404, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_path_not_found"))));
                             return true;
                         }
                     }
@@ -769,12 +1067,12 @@ namespace LocalDiskServer
                         psi.WorkingDirectory = pathStr;
                         psi.UseShellExecute = true;
                         System.Diagnostics.Process.Start(psi);
-                        Logger.Log(string.Format("在宿主电脑终端中打开路径: {0}, 使用终端: {1}", pathStr, exeStr));
+                        Logger.Log(I18nManager.T("log_host_terminal", pathStr, exeStr));
                         HttpServer.ServeJson(response, 200, "{\"success\":true}");
                     }
                     catch (Exception ex)
                     {
-                        Logger.Log(string.Format("打开宿主电脑终端失败: {0}, 错误: {1}", pathStr, ex.Message));
+                        Logger.Log(I18nManager.T("log_host_terminal_failed", pathStr, ex.Message));
                         HttpServer.ServeJson(response, 500, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(ex.Message)));
                     }
                 }
@@ -783,8 +1081,8 @@ namespace LocalDiskServer
                     string pathStr = request.QueryString["path"];
                     if (string.IsNullOrEmpty(pathStr))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"缺少路径参数\"}");
-            return true;
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_missing_path"))));
+                        return true;
                     }
                     bool exists = Directory.Exists(pathStr) || File.Exists(pathStr);
                     bool isDir = Directory.Exists(pathStr);
@@ -845,12 +1143,12 @@ namespace LocalDiskServer
                     string pathStr = request.QueryString["path"];
                     if (string.IsNullOrEmpty(pathStr))
                     {
-                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"缺少路径参数\"}");
+                        HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_missing_path"))));
                         return true;
                     }
                     if (!File.Exists(pathStr))
                     {
-                        HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"文件不存在\"}");
+                        HttpServer.ServeJson(response, 404, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_file_not_found"))));
                         return true;
                     }
                     try

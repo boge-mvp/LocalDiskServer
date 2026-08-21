@@ -12,10 +12,11 @@ namespace LocalDiskServer
     static class Program
     {
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
             try
             {
+                ServerApplicationContext.ParseCommandLineArgs(args);
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
                 Application.Run(new ServerApplicationContext());
@@ -64,6 +65,51 @@ namespace LocalDiskServer
         public static string configFile = "server_config.ini";
         public static string textExtensionsStr = "txt,md,log,ini,conf,cfg,json,js,css,html,htm,xml,bat,sh,py,java,cs,go,rs,cpp,h,c,properties,yaml,yml,sql,ts";
         public static string favoritesStr = "";
+
+        // 命令行控制与测试模式变量
+        public static bool isTestMode = false;
+        public static bool noBrowser = false;
+        public static int? overridePort = null;
+        public static int? overrideHttpsPort = null;
+
+        public static void ParseCommandLineArgs(string[] args)
+        {
+            if (args == null || args.Length == 0) return;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                string arg = args[i];
+                if (string.Equals(arg, "--test", StringComparison.OrdinalIgnoreCase) || 
+                    string.Equals(arg, "-test", StringComparison.OrdinalIgnoreCase))
+                {
+                    isTestMode = true;
+                    configFile = "server_config_test.ini";
+                    port = 18080;
+                    https_port = 18443;
+                    last_bound_https_port = 18443;
+                }
+                else if (string.Equals(arg, "--no-browser", StringComparison.OrdinalIgnoreCase))
+                {
+                    noBrowser = true;
+                }
+                else if ((string.Equals(arg, "--port", StringComparison.OrdinalIgnoreCase) || string.Equals(arg, "-p", StringComparison.OrdinalIgnoreCase)) && i + 1 < args.Length)
+                {
+                    int p;
+                    if (int.TryParse(args[++i], out p))
+                    {
+                        overridePort = p;
+                    }
+                }
+                else if ((string.Equals(arg, "--https-port", StringComparison.OrdinalIgnoreCase) || string.Equals(arg, "-sp", StringComparison.OrdinalIgnoreCase)) && i + 1 < args.Length)
+                {
+                    int p;
+                    if (int.TryParse(args[++i], out p))
+                    {
+                        overrideHttpsPort = p;
+                    }
+                }
+            }
+        }
 
         public class CachedDependency
         {
@@ -221,11 +267,23 @@ namespace LocalDiskServer
                             language = line.Substring(9).Trim();
                         }
                     }
-                    Log(string.Format("加载配置文件成功。端口: {0}, HTTPS端口: {1}, 语言: {2}", port, https_port, string.IsNullOrEmpty(language) ? "自动匹配" : language));
+                    Log(I18nManager.T("log_config_loaded", port, https_port, string.IsNullOrEmpty(language) ? I18nManager.T("common_auto_match") : language));
                 }
                 else
                 {
                     SaveConfig();
+                }
+
+                // 命令行优先级高于配置文件
+                if (overridePort.HasValue)
+                {
+                    port = overridePort.Value;
+                    Log(I18nManager.T("log_cmd_override_http", port));
+                }
+                if (overrideHttpsPort.HasValue)
+                {
+                    https_port = overrideHttpsPort.Value;
+                    Log(I18nManager.T("log_cmd_override_https", https_port));
                 }
             }
             catch (Exception ex)
@@ -255,11 +313,11 @@ namespace LocalDiskServer
                 sb.AppendLine("favorites=" + favoritesStr);
                 sb.AppendLine("language=" + (language ?? ""));
                 File.WriteAllText(configPath, sb.ToString());
-                Log("保存配置文件成功");
+                Log(I18nManager.T("log_config_saved"));
             }
             catch (Exception ex)
             {
-                MessageBox.Show("保存配置文件失败: " + ex.Message, I18nManager.T("dialog_warning"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(I18nManager.T("dialog_save_config_fail", ex.Message), I18nManager.T("dialog_warning"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -456,7 +514,7 @@ namespace LocalDiskServer
                 {
                     port = newPort;
                     SaveConfig();
-                    Log("正在应用新端口 " + port + " 重启服务...");
+                    Log(I18nManager.T("log_restarting_http", port));
                     HttpServer.StartServer();
                     UpdateMenuTexts();
                 }
@@ -482,11 +540,11 @@ namespace LocalDiskServer
                     
                     if (use_https)
                     {
-                        Log("正在重新绑定 HTTPS 证书 (先注销 " + oldPort + "，再绑定 " + newPort + ")...");
+                        Log(I18nManager.T("log_rebinding_https", oldPort, newPort));
                         SslManager.BindSslCertificate(newPort, oldPort);
                     }
                     
-                    Log("正在应用新端口 " + https_port + " 重启服务...");
+                    Log(I18nManager.T("log_restarting_https", https_port));
                     HttpServer.StartServer();
                     UpdateMenuTexts();
                 }
@@ -503,14 +561,14 @@ namespace LocalDiskServer
             if (target)
             {
                 // 开启 HTTPS
-                Log("正在启用 HTTPS，开始自动注册并绑定本地自签名证书...");
+                Log(I18nManager.T("log_enabling_https"));
                 SslManager.BindSslCertificate(https_port, 0);
                 use_https = true;
             }
             else
             {
                 // 关闭 HTTPS
-                Log("正在禁用 HTTPS，自动注销端口 " + https_port + " 的 SSL 绑定...");
+                Log(I18nManager.T("log_disabling_https", https_port));
                 SslManager.UnbindSslCertificate(https_port);
                 use_https = false;
             }
@@ -518,7 +576,7 @@ namespace LocalDiskServer
             SaveConfig();
             HttpServer.StartServer();
             UpdateMenuTexts();
-            Log("HTTPS 双通道状态已更新，已自动热重启服务器。");
+            Log(I18nManager.T("log_https_updated"));
         }
 
         private void ChangeTextExtensions(object sender, EventArgs e)
@@ -527,7 +585,7 @@ namespace LocalDiskServer
             if (input == null) return;
             textExtensionsStr = input.Trim();
             SaveConfig();
-            Log("可读文本文件后缀已更新");
+            Log(I18nManager.T("log_text_ext_updated"));
         }
 
         private void ToggleStartup(object sender, EventArgs e)
@@ -537,7 +595,7 @@ namespace LocalDiskServer
             if (SetStartup(target))
             {
                 startupMenuItem.Checked = target;
-                Log("开机自启动状态已设置为: " + (target ? "开启" : "关闭"));
+                Log(I18nManager.T("log_startup_updated", target ? I18nManager.T("common_enabled") : I18nManager.T("common_disabled")));
             }
         }
 

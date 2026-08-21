@@ -110,10 +110,10 @@ a:hover {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 15px;
-    margin-bottom: 15px;
+    gap: 10px;
+    margin-bottom: 6px;
     background: var(--bg-color);
-    padding: 6px 12px;
+    padding: 4px 8px;
     border-radius: 6px;
     border: 1px solid var(--border-color);
 }
@@ -203,19 +203,99 @@ a:hover {
 /* File Table Styles */
 table {
     width: 100%;
-    border-collapse: collapse;
-    margin-top: 10px;
+    min-width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin-top: 0;
+    table-layout: fixed;
+    box-sizing: border-box;
 }
 th, td {
-    padding: 8px 12px;
+    padding: 5px 8px;
     text-align: left;
     border-bottom: 1px solid var(--border-color);
-    font-size: 0.9rem;
+    font-size: 0.88rem;
+    white-space: nowrap;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+td {
+    text-overflow: ellipsis;
 }
 th {
     background-color: var(--bg-color);
     font-weight: bold;
     color: var(--text-muted);
+    text-overflow: clip;
+}
+#file-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background-color: var(--container-bg);
+    border-bottom: 1px solid var(--border-color);
+    box-shadow: 0 1px 0 var(--border-color);
+}
+#file-table thead th:last-child {
+    padding-right: 14px;
+}
+#file-table tbody tr.item-row td:last-child {
+    padding-right: 14px;
+}
+.col-resizer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 7px;
+    height: 100%;
+    cursor: col-resize;
+    user-select: none;
+    z-index: 25;
+}
+.col-resizer::after {
+    content: '';
+    position: absolute;
+    top: 15%;
+    bottom: 15%;
+    right: 0;
+    width: 1px;
+    background-color: var(--border-color);
+    transition: background-color 0.15s, width 0.15s;
+}
+.col-resizer:hover::after, .col-resizer.resizing::after {
+    background-color: var(--accent-color);
+    width: 2px;
+}
+#file-table thead th:last-child .col-resizer::after {
+    display: none;
+}
+th.col-sortable {
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.15s, background-color 0.15s;
+    position: relative;
+    white-space: nowrap;
+    text-overflow: clip;
+    overflow: hidden;
+}
+th.col-sortable .th-label {
+    display: inline-block;
+    white-space: nowrap;
+    pointer-events: none;
+    overflow: visible;
+    text-overflow: clip;
+}
+th.col-sortable:hover {
+    color: var(--accent-hover);
+    background-color: var(--row-hover);
+}
+th.col-sortable .sort-arrow {
+    display: inline-block;
+    margin-left: 4px;
+    font-size: 0.75rem;
+    color: var(--accent-color);
+    width: 12px;
+    text-align: center;
 }
 tr.item-row {
     transition: background 0.1s;
@@ -236,6 +316,7 @@ tr.item-row td a {
 }
 .name-text {
     word-break: break-all;
+    white-space: normal;
 }
 /* Code / Plain text preview styles */
 .file-meta-bar {
@@ -360,19 +441,21 @@ tr.item-row.selected {
 .context-menu {
     position: fixed;
     background: rgba(30, 30, 30, 0.95);
-    backdrop-filter: blur(8px);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     border: 1px solid var(--border-color);
-    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-    border-radius: 6px;
-    padding: 5px 0;
-    min-width: 150px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    padding: 6px 0;
+    min-width: 180px;
     z-index: 10000;
     display: none;
     user-select: none;
 }
 @media (prefers-color-scheme: light) {
     .context-menu {
-        background: rgba(255, 255, 255, 0.95);
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15), 0 2px 6px rgba(0, 0, 0, 0.08);
     }
 }
 .context-menu-item.has-submenu {
@@ -385,37 +468,46 @@ tr.item-row.selected {
     display: none;
     position: absolute;
     left: 100%;
-    top: -5px;
+    top: -6px;
     background: rgba(30, 30, 30, 0.95);
-    backdrop-filter: blur(8px);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     border: 1px solid var(--border-color);
-    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-    border-radius: 6px;
-    padding: 5px 0;
-    min-width: 170px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    padding: 6px 0;
+    min-width: 200px;
     z-index: 10001;
 }
 @media (prefers-color-scheme: light) {
     .context-submenu {
-        background: rgba(255, 255, 255, 0.95);
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15), 0 2px 6px rgba(0, 0, 0, 0.08);
     }
 }
 .context-menu-item.has-submenu:hover .context-submenu {
     display: block;
 }
 .context-submenu.edge-left {
-    left: auto;
-    right: 100%;
+    left: auto !important;
+    right: 100% !important;
+}
+.context-submenu.edge-bottom {
+    top: auto !important;
+    bottom: -6px !important;
 }
 .context-menu-item {
-    padding: 8px 15px;
-    font-size: 0.85rem;
+    padding: 7px 16px;
+    font-size: 0.88rem;
     cursor: pointer;
     color: var(--text-color);
     display: flex;
     align-items: center;
     gap: 10px;
-    transition: background 0.1s;
+    white-space: nowrap;
+    transition: background 0.12s ease;
+    margin: 1px 4px;
+    border-radius: 5px;
 }
 .context-menu-item:hover {
     background-color: var(--row-hover);
@@ -424,7 +516,7 @@ tr.item-row.selected {
     color: #e74c3c;
 }
 .context-menu-item.danger:hover {
-    background-color: rgba(231, 76, 60, 0.1);
+    background-color: rgba(231, 76, 60, 0.12);
 }
 /* View Switcher and View Modes Styles */
 .view-switcher {
@@ -971,13 +1063,29 @@ body.layout-explorer .container {
     background: var(--container-bg);
     border: 1px solid var(--border-color);
     border-radius: 8px;
-    padding: 15px;
+    padding: 0;
     box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    overflow-y: auto;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     box-sizing: border-box;
     min-width: 0;
+}
+.explorer-main > .toolbar {
+    margin: 8px 10px 4px 10px;
+    flex-shrink: 0;
+}
+.explorer-scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden !important;
+    touch-action: pan-y;
+    padding: 0 10px 10px 10px;
+    min-height: 0;
+    position: relative;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 /* 3. Right Preview Pane styling */
@@ -1155,4 +1263,50 @@ body.layout-explorer .container {
 /* Ensure all elements inside the three columns use standard border-box box model to prevent right-hand clipping */
 .explorer-sidebar *, .explorer-main *, .explorer-preview * {
     box-sizing: border-box;
+}
+
+/* Bottom Status Bar */
+.explorer-statusbar {
+    flex-shrink: 0;
+    height: 28px;
+    background: var(--container-bg);
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    user-select: none;
+    z-index: 10;
+}
+
+.explorer-statusbar .status-left,
+.explorer-statusbar .status-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.explorer-statusbar .status-separator {
+    color: var(--border-color);
+    margin: 0 2px;
+}
+
+.explorer-statusbar .status-right {
+    color: var(--text-color);
+    opacity: 0.85;
+}
+
+/* Smooth Column Resizing Performance */
+body.resizing-col {
+    cursor: col-resize !important;
+    user-select: none !important;
+}
+
+body.resizing-col #file-table {
+    pointer-events: none;
 }

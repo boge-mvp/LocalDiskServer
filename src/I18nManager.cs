@@ -21,6 +21,7 @@ namespace LocalDiskServer
 
         public static string CurrentLanguageCode { get; private set; }
         public static string CurrentLanguageName { get; private set; }
+        public static string CurrentLanguage { get { return CurrentLanguageCode ?? "zh-CN"; } }
 
         public static event Action LanguageChanged;
 
@@ -28,6 +29,13 @@ namespace LocalDiskServer
         {
             CurrentLanguageCode = "en-US";
             CurrentLanguageName = "English";
+
+            // 预加载内置英文包作为终极 fallback 底座
+            try
+            {
+                LoadEmbeddedLocale("en-US", fallbackStrings);
+            }
+            catch {}
         }
 
         public static void Initialize(string configuredLanguage)
@@ -45,7 +53,7 @@ namespace LocalDiskServer
             }
             catch (Exception ex)
             {
-                Logger.Log("I18nManager 初始化异常: " + ex.Message);
+                Logger.Log(T("log_i18n_init_ex", ex.Message));
             }
         }
 
@@ -62,28 +70,21 @@ namespace LocalDiskServer
 
                 // 预置语言资源清单
                 string[] defaultLocales = new string[] { "zh-CN.ini", "en-US.ini" };
-                Assembly asm = Assembly.GetExecutingAssembly();
 
                 foreach (string localeFile in defaultLocales)
                 {
                     string targetPath = Path.Combine(localesDir, localeFile);
+                    string langCode = Path.GetFileNameWithoutExtension(localeFile);
+                    
+                    // 读取内嵌最新内容
+                    var embeddedDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    LoadEmbeddedLocale(langCode, embeddedDict);
+
                     if (!File.Exists(targetPath))
                     {
-                        // 尝试从内嵌资源读取
-                        string resourceName = "locales/" + localeFile;
-                        Stream stream = asm.GetManifestResourceStream(resourceName);
-                        if (stream == null)
-                        {
-                            // 尝试不带斜杠或点分割的名称
-                            resourceName = "locales." + localeFile;
-                            stream = asm.GetManifestResourceStream(resourceName);
-                        }
-                        if (stream == null)
-                        {
-                            resourceName = localeFile;
-                            stream = asm.GetManifestResourceStream(resourceName);
-                        }
-
+                        // 首次释放
+                        Assembly asm = Assembly.GetExecutingAssembly();
+                        Stream stream = GetResourceStream("locales/" + localeFile);
                         if (stream != null)
                         {
                             using (stream)
@@ -91,14 +92,50 @@ namespace LocalDiskServer
                             {
                                 stream.CopyTo(fs);
                             }
-                            Logger.Log("已释放内嵌语言包到: " + targetPath);
+                            Logger.Log(T("log_i18n_extracted", targetPath));
+                        }
+                    }
+                    else
+                    {
+                        // 已存在文件：检查是否有新增键值需要增量补充
+                        try
+                        {
+                            var diskDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                            ParseIniFile(targetPath, diskDict);
+
+                            var missingKeys = new List<string>();
+                            foreach (var kvp in embeddedDict)
+                            {
+                                if (!diskDict.ContainsKey(kvp.Key))
+                                {
+                                    missingKeys.Add(kvp.Key);
+                                }
+                            }
+
+                            if (missingKeys.Count > 0)
+                            {
+                                StringBuilder sb = new StringBuilder();
+                                sb.AppendLine();
+                                sb.AppendLine("# --- Auto Increment Synced Translation Keys ---");
+                                foreach (var key in missingKeys)
+                                {
+                                    string val = embeddedDict[key].Replace("\n", "\\n").Replace("\t", "\\t");
+                                    sb.AppendLine(string.Format("{0}={1}", key, val));
+                                }
+                                File.AppendAllText(targetPath, sb.ToString(), Encoding.UTF8);
+                                Logger.Log(T("log_i18n_keys_added", localeFile, missingKeys.Count));
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Log(T("log_i18n_update_ex", ex.Message));
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                Logger.Log("EnsureLocalesExtracted 异常: " + ex.Message);
+                Logger.Log(T("log_i18n_extract_ex", ex.Message));
             }
         }
 
@@ -149,7 +186,7 @@ namespace LocalDiskServer
             }
             catch (Exception ex)
             {
-                Logger.Log("GetAvailableLanguages 异常: " + ex.Message);
+                Logger.Log(T("log_i18n_get_langs_ex", ex.Message));
             }
 
             if (list.Count == 0)
@@ -222,50 +259,32 @@ namespace LocalDiskServer
         {
             try
             {
+                Dictionary<string, string> dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                // 1. 先加载内嵌资源作为默认基底
+                LoadEmbeddedLocale(langCode, dict);
+
+                // 2. 再加载磁盘上的语言文件覆盖/补充
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
                 string localesDir = Path.Combine(baseDir, "locales");
                 string targetFile = Path.Combine(localesDir, langCode + ".ini");
 
-                if (!File.Exists(targetFile))
+                if (!File.Exists(targetFile) && Directory.Exists(localesDir))
                 {
-                    // 尝试匹配不区分大小写的文件名
-                    if (Directory.Exists(localesDir))
+                    string[] files = Directory.GetFiles(localesDir, "*.ini");
+                    foreach (string f in files)
                     {
-                        string[] files = Directory.GetFiles(localesDir, "*.ini");
-                        foreach (string f in files)
+                        if (string.Equals(Path.GetFileNameWithoutExtension(f), langCode, StringComparison.OrdinalIgnoreCase))
                         {
-                            if (string.Equals(Path.GetFileNameWithoutExtension(f), langCode, StringComparison.OrdinalIgnoreCase))
-                            {
-                                targetFile = f;
-                                break;
-                            }
+                            targetFile = f;
+                            break;
                         }
                     }
                 }
-
-                Dictionary<string, string> dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
                 if (File.Exists(targetFile))
                 {
                     ParseIniFile(targetFile, dict);
-                }
-                else
-                {
-                    // 尝试从内嵌资源读取
-                    Assembly asm = Assembly.GetExecutingAssembly();
-                    string resourceName = "locales/" + langCode + ".ini";
-                    Stream stream = asm.GetManifestResourceStream(resourceName);
-                    if (stream == null) stream = asm.GetManifestResourceStream("locales." + langCode + ".ini");
-                    if (stream == null) stream = asm.GetManifestResourceStream(langCode + ".ini");
-
-                    if (stream != null)
-                    {
-                        using (stream)
-                        using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
-                        {
-                            ParseIniText(reader.ReadToEnd(), dict);
-                        }
-                    }
                 }
 
                 if (dict.Count > 0)
@@ -279,7 +298,7 @@ namespace LocalDiskServer
                     CurrentLanguageCode = dict.ContainsKey("language_code") ? dict["language_code"] : langCode;
                     CurrentLanguageName = dict.ContainsKey("language_name") ? dict["language_name"] : langCode;
 
-                    Logger.Log(string.Format("多语言加载成功: {0} ({1}), 翻译条目: {2}", CurrentLanguageName, CurrentLanguageCode, currentStrings.Count));
+                    Logger.Log(T("log_i18n_loaded", CurrentLanguageName, CurrentLanguageCode, currentStrings.Count));
 
                     if (LanguageChanged != null)
                     {
@@ -290,9 +309,46 @@ namespace LocalDiskServer
             }
             catch (Exception ex)
             {
-                Logger.Log("LoadLanguage 异常 (" + langCode + "): " + ex.Message);
+                Logger.Log(T("log_i18n_load_ex", langCode, ex.Message));
             }
             return false;
+        }
+
+        private static Stream GetResourceStream(string relativePath)
+        {
+            Assembly asm = Assembly.GetExecutingAssembly();
+            Stream stream = asm.GetManifestResourceStream(relativePath);
+            if (stream == null)
+            {
+                stream = asm.GetManifestResourceStream(relativePath.Replace('/', '.'));
+            }
+            if (stream == null)
+            {
+                string leaf = Path.GetFileName(relativePath);
+                stream = asm.GetManifestResourceStream(leaf);
+            }
+            return stream;
+        }
+
+        private static void LoadEmbeddedLocale(string langCode, Dictionary<string, string> target)
+        {
+            try
+            {
+                string resourceName = "locales/" + langCode + ".ini";
+                Stream stream = GetResourceStream(resourceName);
+                if (stream != null)
+                {
+                    using (stream)
+                    using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                    {
+                        ParseIniText(reader.ReadToEnd(), target);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log(T("log_i18n_load_embedded_ex", langCode, ex.Message));
+            }
         }
 
         private static void ParseIniFile(string filePath, Dictionary<string, string> target)
@@ -321,6 +377,34 @@ namespace LocalDiskServer
                     }
                 }
             }
+        }
+
+        public static string GetCurrentStringsJson()
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("{");
+            bool first = true;
+            // 综合 fallback 与 currentStrings
+            var merged = new Dictionary<string, string>(fallbackStrings, StringComparer.OrdinalIgnoreCase);
+            foreach (var kvp in currentStrings)
+            {
+                merged[kvp.Key] = kvp.Value;
+            }
+
+            foreach (var kvp in merged)
+            {
+                if (!first) sb.Append(",");
+                first = false;
+                string escapedVal = kvp.Value
+                    .Replace("\\", "\\\\")
+                    .Replace("\"", "\\\"")
+                    .Replace("\r", "\\r")
+                    .Replace("\n", "\\n")
+                    .Replace("\t", "\\t");
+                sb.AppendFormat("\"{0}\":\"{1}\"", kvp.Key, escapedVal);
+            }
+            sb.Append("}");
+            return sb.ToString();
         }
 
         public static string T(string key, params object[] args)
