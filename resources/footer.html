@@ -13,10 +13,98 @@
         </div>
     </div>
 
-    <!-- Log Trigger Button -->
-    <button class='log-trigger-btn' onclick='showLogs()'>
-        <span>📝</span> {MENU_VIEW_LOGS}
-    </button>
+    <!-- Settings Modal -->
+    <div id='settings-modal' class='modal'>
+        <div class='modal-content settings-modal-content'>
+            <div class='modal-header' style='display: flex; justify-content: space-between; align-items: center;'>
+                <div style='display: flex; align-items: center; gap: 8px;'>
+                    <span class='modal-title'>{SETTINGS_MODAL_TITLE}</span>
+                    <span class='settings-version-tag'>v{APP_VERSION}</span>
+                </div>
+                <button class='modal-close' onclick='closeSettingsModal()'>&times;</button>
+            </div>
+            <div class='modal-body' id='settings-body'>
+                <div class='settings-section'>
+                    <div class='settings-section-title'>🌐 {SETTINGS_SEC_NETWORK}</div>
+                    <div class='settings-row'>
+                        <div class='settings-field'>
+                            <label for='setting-port'>{SETTINGS_HTTP_PORT}</label>
+                            <input type='number' id='setting-port' min='1' max='65535' class='settings-input'>
+                        </div>
+                        <div class='settings-field'>
+                            <label for='setting-https-port'>{SETTINGS_HTTPS_PORT}</label>
+                            <input type='number' id='setting-https-port' min='1' max='65535' class='settings-input'>
+                        </div>
+                    </div>
+                    <div class='settings-checkbox-row'>
+                        <input type='checkbox' id='setting-use-https'>
+                        <label for='setting-use-https'>{SETTINGS_USE_HTTPS}</label>
+                    </div>
+                </div>
+
+                <div class='settings-section'>
+                    <div class='settings-section-title'>📦 {SETTINGS_SEC_FEATURES}</div>
+                    <div class='settings-checkbox-row'>
+                        <input type='checkbox' id='setting-enable-dev'>
+                        <label for='setting-enable-dev'>{SETTINGS_ENABLE_DEV}</label>
+                    </div>
+                </div>
+
+                <div class='settings-section'>
+                    <div class='settings-section-title'>💾 {SETTINGS_SEC_CACHE}</div>
+                    <div class='settings-cache-box'>
+                        <div class='settings-cache-info'>
+                            <span class='settings-cache-label'>{SETTINGS_CACHE_SIZE_LABEL}</span>
+                            <span id='setting-cache-size' class='settings-cache-val'>{SETTINGS_CACHE_CALCULATING}</span>
+                        </div>
+                        <div class='settings-cache-ops'>
+                            <button type='button' class='settings-btn-op' onclick='clearAppCache()'>{SETTINGS_BTN_CLEAR_CACHE}</button>
+                            <button type='button' class='settings-btn-op' onclick='openAppCacheDir()'>{SETTINGS_BTN_OPEN_CACHE_DIR}</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class='settings-section'>
+                    <div class='settings-section-title'>🌍 {SETTINGS_SEC_GENERAL}</div>
+                    <div class='settings-row'>
+                        <div class='settings-field' style='flex: 1;'>
+                            <label for='setting-language'>{SETTINGS_LANGUAGE}</label>
+                            <select id='setting-language' class='settings-select'></select>
+                        </div>
+                        <div class='settings-field' style='flex: 1;'>
+                            <label class='settings-label-placeholder'>&nbsp;</label>
+                            <div class='settings-checkbox-row settings-checkbox-aligned'>
+                                <input type='checkbox' id='setting-startup'>
+                                <label for='setting-startup'>{SETTINGS_STARTUP}</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class='settings-section'>
+                    <div class='settings-section-header' style='display: flex; justify-content: space-between; align-items: center;'>
+                        <div class='settings-section-title' style='margin: 0;'>📝 {SETTINGS_SEC_TEXT_EXT}</div>
+                        <button type='button' class='settings-btn-sub' onclick='toggleSettingsTextExtFormat()'>{DIALOG_TEXT_EXT_TOGGLE_FORMAT}</button>
+                    </div>
+                    <div class='settings-desc'>{SETTINGS_TEXT_EXT_DESC}</div>
+                    <textarea id='setting-text-ext' class='settings-textarea' rows='4'></textarea>
+                </div>
+
+                <div class='settings-section'>
+                    <div class='settings-section-title'>🛠️ {SETTINGS_SEC_SYSTEM_OPS}</div>
+                    <div class='settings-ops-bar'>
+                        <button type='button' class='settings-btn-op' onclick='openSystemConfigFile()'>{SETTINGS_BTN_OPEN_CONFIG}</button>
+                        <button type='button' class='settings-btn-op' onclick='openSystemAppDir()'>{SETTINGS_BTN_OPEN_APP_DIR}</button>
+                        <button type='button' class='settings-btn-op' onclick='closeSettingsModal(); showLogs();'>{SETTINGS_BTN_VIEW_LOGS}</button>
+                    </div>
+                </div>
+            </div>
+            <div class='modal-footer'>
+                <button class='modal-btn modal-btn-secondary' onclick='closeSettingsModal()'>{SETTINGS_BTN_CANCEL}</button>
+                <button class='modal-btn modal-btn-primary' id='settings-save-btn' onclick='saveSettingsForm()'>{SETTINGS_BTN_SAVE}</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Log Modal -->
     <div id='log-modal' class='modal'>

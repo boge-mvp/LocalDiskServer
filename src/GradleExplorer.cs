@@ -21,18 +21,203 @@ namespace LocalDiskServer
 
         public static readonly List<CachedDependency> cachedDependencies = new List<CachedDependency>();
 
-        public static void TriggerGradleScanAsync()
+        public static string GetCacheFilePath()
         {
+            try
+            {
+                string cacheDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache");
+                if (!Directory.Exists(cacheDir))
+                {
+                    Directory.CreateDirectory(cacheDir);
+                }
+                return Path.Combine(cacheDir, "gradle_cache.dat");
+            }
+            catch
+            {
+                return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "gradle_cache.dat");
+            }
+        }
+
+        public static void ClearCacheAndReleaseResources()
+        {
+            lock (gradleScanLock)
+            {
+                cachedDependencies.Clear();
+                cachedDependencies.TrimExcess();
+                cachedWrappersJson = "[]";
+                cachedDependencyCount = 0;
+                cachedKmpCount = 0;
+                cachedTotalSize = 0;
+                cachedGradleHome = "";
+            }
+            GC.Collect();
+            Logger.Log(I18nManager.T("log_dev_ecosystem_released"));
+        }
+
+        public static void SaveToDiskCache(long distsTicks, long filesTicks)
+        {
+            try
+            {
+                string cacheFile = GetCacheFilePath();
+                StringBuilder sb = new StringBuilder();
+                sb.AppendFormat("#META:{0}|{1}|{2}|{3}|{4}|{5}", distsTicks, filesTicks, cachedDependencyCount, cachedKmpCount, cachedTotalSize, cachedGradleHome ?? "").AppendLine();
+                sb.AppendLine("#WRAPPERS:" + (cachedWrappersJson ?? "[]"));
+                lock (gradleScanLock)
+                {
+                    for (int i = 0; i < cachedDependencies.Count; i++)
+                    {
+                        var d = cachedDependencies[i];
+                        sb.AppendFormat("{0}|{1}|{2}|{3}|{4}|{5}",
+                            d.Group ?? "", d.Artifact ?? "", d.Version ?? "",
+                            d.IsKmp ? "1" : "0", d.FriendlySize ?? "", d.LocalPath ?? "").AppendLine();
+                    }
+                }
+                File.WriteAllText(cacheFile, sb.ToString(), Encoding.UTF8);
+                Logger.Log(I18nManager.T("log_dev_ecosystem_saved", cacheFile));
+            }
+            catch (Exception ex)
+            {
+                Logger.Log("SaveToDiskCache Exception: " + ex.Message);
+            }
+        }
+
+        public static bool TryLoadFromDiskCache(out long distsTicks, out long filesTicks)
+        {
+            distsTicks = 0;
+            filesTicks = 0;
+            try
+            {
+                string cacheFile = GetCacheFilePath();
+                if (!File.Exists(cacheFile)) return false;
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                string[] lines = File.ReadAllLines(cacheFile, Encoding.UTF8);
+                if (lines == null || lines.Length < 2) return false;
+
+                string metaLine = lines[0];
+                if (!metaLine.StartsWith("#META:")) return false;
+                string[] metaParts = metaLine.Substring(6).Split('|');
+                if (metaParts.Length < 6) return false;
+
+                long.TryParse(metaParts[0], out distsTicks);
+                long.TryParse(metaParts[1], out filesTicks);
+                int depCount = 0; int.TryParse(metaParts[2], out depCount);
+                int kmpCount = 0; int.TryParse(metaParts[3], out kmpCount);
+                long totalSize = 0; long.TryParse(metaParts[4], out totalSize);
+                string gHome = metaParts[5];
+
+                string wrapLine = lines[1];
+                string wrappers = wrapLine.StartsWith("#WRAPPERS:") ? wrapLine.Substring(10) : "[]";
+
+                List<CachedDependency> deps = new List<CachedDependency>(Math.Max(32, lines.Length - 2));
+                for (int i = 2; i < lines.Length; i++)
+                {
+                    string line = lines[i];
+                    if (string.IsNullOrEmpty(line)) continue;
+                    string[] parts = line.Split('|');
+                    if (parts.Length >= 6)
+                    {
+                        deps.Add(new CachedDependency
+                        {
+                            Group = parts[0],
+                            Artifact = parts[1],
+                            Version = parts[2],
+                            IsKmp = parts[3] == "1",
+                            FriendlySize = parts[4],
+                            LocalPath = parts[5]
+                        });
+                    }
+                }
+
+                lock (gradleScanLock)
+                {
+                    cachedGradleHome = gHome;
+                    cachedWrappersJson = wrappers;
+                    cachedDependencyCount = depCount;
+                    cachedKmpCount = kmpCount;
+                    cachedTotalSize = totalSize;
+                    cachedDependencies.Clear();
+                    cachedDependencies.AddRange(deps);
+                }
+
+                sw.Stop();
+                Logger.Log(I18nManager.T("log_dev_ecosystem_fast_loaded", "Gradle", deps.Count, sw.ElapsedMilliseconds));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log("TryLoadFromDiskCache Exception: " + ex.Message);
+                return false;
+            }
+        }
+
+        public static void TriggerGradleScanAsync(bool forceRescan = false)
+        {
+            if (!ServerApplicationContext.enable_dev_ecosystem) return;
+
             lock (gradleScanLock)
             {
                 if (isGradleScanning) return;
                 isGradleScanning = true;
             }
-            Logger.Log(I18nManager.T("log_gradle_scan_thread_started"));
+
             System.Threading.ThreadPool.QueueUserWorkItem(delegate {
                 try
                 {
-                    DoGradleScan();
+                    if (!ServerApplicationContext.enable_dev_ecosystem) return;
+
+                    string gHome = GetGradleHome();
+                    cachedGradleHome = gHome;
+                    if (string.IsNullOrEmpty(gHome))
+                    {
+                        lock (gradleScanLock)
+                        {
+                            cachedWrappersJson = "[]";
+                            cachedDependencyCount = 0;
+                            cachedKmpCount = 0;
+                            cachedTotalSize = 0;
+                            cachedDependencies.Clear();
+                        }
+                        return;
+                    }
+
+                    string distsPath = Path.Combine(gHome, "wrapper", "dists");
+                    string files21Path = Path.Combine(gHome, "caches", "modules-2", "files-2.1");
+
+                    long curDistsTicks = Directory.Exists(distsPath) ? Directory.GetLastWriteTimeUtc(distsPath).Ticks : 0;
+                    long curFilesTicks = Directory.Exists(files21Path) ? Directory.GetLastWriteTimeUtc(files21Path).Ticks : 0;
+
+                    // 1. 如果非强制重扫且内存为空，优先尝试从磁盘快照秒级冷启动
+                    if (!forceRescan && cachedDependencies.Count == 0)
+                    {
+                        long cachedDistsTicks, cachedFilesTicks;
+                        if (TryLoadFromDiskCache(out cachedDistsTicks, out cachedFilesTicks))
+                        {
+                            // 2. 毫秒级时间戳比对探活
+                            if (curDistsTicks == cachedDistsTicks && curFilesTicks == cachedFilesTicks)
+                            {
+                                Logger.Log(I18nManager.T("log_dev_ecosystem_verified"));
+                                return; // 数据100%真实一致，探活成功退出！
+                            }
+                        }
+                    }
+                    else if (!forceRescan && cachedDependencies.Count > 0)
+                    {
+                        // 内存已有数据，仅读取元数据比对
+                        long cachedDistsTicks, cachedFilesTicks;
+                        if (ReadMetadataTicks(out cachedDistsTicks, out cachedFilesTicks))
+                        {
+                            if (curDistsTicks == cachedDistsTicks && curFilesTicks == cachedFilesTicks)
+                            {
+                                Logger.Log(I18nManager.T("log_dev_ecosystem_verified"));
+                                return;
+                            }
+                        }
+                    }
+
+                    // 3. 执行真实物理扫描
+                    Logger.Log(I18nManager.T("log_gradle_scan_thread_started"));
+                    DoGradleScan(gHome, distsPath, files21Path, curDistsTicks, curFilesTicks);
                 }
                 catch (Exception ex)
                 {
@@ -48,25 +233,36 @@ namespace LocalDiskServer
             });
         }
 
-        private static void DoGradleScan()
+        private static bool ReadMetadataTicks(out long distsTicks, out long filesTicks)
         {
-            string gHome = GetGradleHome();
-            cachedGradleHome = gHome;
-            if (string.IsNullOrEmpty(gHome))
+            distsTicks = 0;
+            filesTicks = 0;
+            try
             {
-                lock (gradleScanLock)
+                string cacheFile = GetCacheFilePath();
+                if (!File.Exists(cacheFile)) return false;
+                using (var reader = new StreamReader(cacheFile, Encoding.UTF8))
                 {
-                    cachedWrappersJson = "[]";
-                    cachedDependencyCount = 0;
-                    cachedKmpCount = 0;
-                    cachedTotalSize = 0;
-                    cachedDependencies.Clear();
+                    string metaLine = reader.ReadLine();
+                    if (metaLine != null && metaLine.StartsWith("#META:"))
+                    {
+                        string[] parts = metaLine.Substring(6).Split('|');
+                        if (parts.Length >= 2)
+                        {
+                            long.TryParse(parts[0], out distsTicks);
+                            long.TryParse(parts[1], out filesTicks);
+                            return true;
+                        }
+                    }
                 }
-                return;
             }
+            catch {}
+            return false;
+        }
 
-            string distsPath = Path.Combine(gHome, "wrapper", "dists");
-            string files21Path = Path.Combine(gHome, "caches", "modules-2", "files-2.1");
+        private static void DoGradleScan(string gHome, string distsPath, string files21Path, long distsTicks, long filesTicks)
+        {
+            if (!ServerApplicationContext.enable_dev_ecosystem) return;
 
             // 1. Scan Wrappers
             StringBuilder wrappersJson = new StringBuilder();
@@ -167,6 +363,7 @@ namespace LocalDiskServer
                 cachedDependencies.Clear();
                 cachedDependencies.AddRange(tmpDeps);
             }
+            SaveToDiskCache(distsTicks, filesTicks);
             Logger.Log(I18nManager.T("log_gradle_scan_finished", depCount, kmpCount, HttpServer.FormatFileSize(totalSize)));
         }
 
@@ -208,6 +405,13 @@ namespace LocalDiskServer
 
         public static void ServeGradleDashboard(HttpListenerResponse response)
         {
+            if (!ServerApplicationContext.enable_dev_ecosystem)
+            {
+                response.Redirect("/");
+                response.OutputStream.Close();
+                return;
+            }
+
             StringBuilder sb = new StringBuilder();
             sb.Append(HttpServer.GetHtmlHeader(I18nManager.T("gradle_page_title"), "", "layout-explorer"));
             sb.Append("<script>const currentView = 'gradle';</script>");
@@ -296,9 +500,19 @@ namespace LocalDiskServer
             sb.Append("      </div>");
             sb.Append("    </div>");
 
-            // 5. Gradle Node (active!)
-            sb.Append("    <div class='tree-node root-node active-node' style='margin-top: 10px; border-top: 1px solid var(--border-color); padding-top: 8px;'>");
-            sb.AppendFormat("      <a href='/?view=gradle' class='tree-link active-node' style='font-weight: bold;'>☕ {0}</a>", I18nManager.T("nav_gradle"));
+            // 5. Developer Ecosystem Node (Gradle active!)
+            sb.Append("    <div class='tree-node root-node' style='margin-top: 10px; border-top: 1px solid var(--border-color); padding-top: 8px;'>");
+            sb.Append("      <div class='tree-row'>");
+            sb.Append("        <span class='tree-arrow' onclick='toggleDevEcosystem(event)'>▼</span>");
+            sb.AppendFormat("        <span class='tree-label' style='font-weight: bold; cursor: pointer;' onclick='toggleDevEcosystem(event)'>📦 {0}</span>", I18nManager.T("nav_dev_ecosystem"));
+            sb.Append("      </div>");
+            sb.Append("      <div class='tree-children' id='children-dev-ecosystem'>");
+            sb.AppendFormat("        <div class='tree-node'><div class='tree-row active'><a href='/?view=gradle' class='tree-link-inline active-node' style='color:inherit; font-weight: bold;'>☕ {0}</a></div></div>", I18nManager.T("nav_gradle"));
+            sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>🪶 {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_maven"), I18nManager.T("tag_coming_soon"));
+            sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>📦 {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_npm"), I18nManager.T("tag_coming_soon"));
+            sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>⚡ {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_pnpm"), I18nManager.T("tag_coming_soon"));
+            sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>🤖 {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_android"), I18nManager.T("tag_coming_soon"));
+            sb.Append("      </div>");
             sb.Append("    </div>");
 
             sb.Append("  </div>");
@@ -423,6 +637,12 @@ namespace LocalDiskServer
 
 public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpListenerResponse response)
         {
+            if (!ServerApplicationContext.enable_dev_ecosystem)
+            {
+                HttpServer.ServeJson(response, 403, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("err_dev_ecosystem_disabled"))));
+                return true;
+            }
+
             #region Gradle API Routing
             if (false) {}
             else if (rawPath.Equals("api/gradle/info", StringComparison.OrdinalIgnoreCase))
@@ -503,7 +723,7 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
                     }
                     else
                     {
-                        GradleExplorer.TriggerGradleScanAsync();
+                        GradleExplorer.TriggerGradleScanAsync(true);
                         HttpServer.ServeJson(response, 200, string.Format("{{\"success\":true,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_scan_started"))));
                     }
                 }

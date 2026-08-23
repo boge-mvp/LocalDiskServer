@@ -440,10 +440,23 @@ namespace LocalDiskServer
             sb.Append("      </div>");
             sb.Append("    </div>");
 
-            // 5. Gradle Analyzer Node
-            sb.Append("    <div class='tree-node root-node' style='margin-top: 10px; border-top: 1px solid var(--border-color); padding-top: 8px;'>");
-            sb.AppendFormat("      <a href='/?view=gradle' class='tree-link' style='font-weight: bold;'>☕ {0}</a>", I18nManager.T("nav_gradle"));
-            sb.Append("    </div>");
+            // 5. Developer Ecosystem Node (Only when enabled)
+            if (ServerApplicationContext.enable_dev_ecosystem)
+            {
+                sb.Append("    <div class='tree-node root-node' style='margin-top: 10px; border-top: 1px solid var(--border-color); padding-top: 8px;'>");
+                sb.Append("      <div class='tree-row'>");
+                sb.Append("        <span class='tree-arrow' onclick='toggleDevEcosystem(event)'>▼</span>");
+                sb.AppendFormat("        <span class='tree-label' style='font-weight: bold; cursor: pointer;' onclick='toggleDevEcosystem(event)'>📦 {0}</span>", I18nManager.T("nav_dev_ecosystem"));
+                sb.Append("      </div>");
+                sb.Append("      <div class='tree-children' id='children-dev-ecosystem'>");
+                sb.AppendFormat("        <div class='tree-node'><div class='tree-row'><a href='/?view=gradle' class='tree-link-inline' style='color:inherit;'>☕ {0}</a></div></div>", I18nManager.T("nav_gradle"));
+                sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>🪶 {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_maven"), I18nManager.T("tag_coming_soon"));
+                sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>📦 {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_npm"), I18nManager.T("tag_coming_soon"));
+                sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>⚡ {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_pnpm"), I18nManager.T("tag_coming_soon"));
+                sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>🤖 {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_android"), I18nManager.T("tag_coming_soon"));
+                sb.Append("      </div>");
+                sb.Append("    </div>");
+            }
 
             sb.Append("  </div>");
             sb.Append("</div>");
@@ -593,6 +606,8 @@ namespace LocalDiskServer
             sb.Append("  </div>");
             sb.Append("  <div class='status-right' id='status-right'>");
             sb.AppendFormat("    <span id='status-selected'>{0}</span>", I18nManager.T("status_no_selection"));
+            sb.Append("    <span class='status-separator'>|</span>");
+            sb.AppendFormat("    <span class='status-version' title='LocalDiskServer v{0}'>⚡ v{0}</span>", ServerApplicationContext.APP_VERSION);
             sb.Append("  </div>");
             sb.Append("</div>");
 

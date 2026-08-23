@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Net;
+using System.Threading;
 using System.Windows.Forms;
 using System.Drawing;
 using System.Diagnostics;
@@ -42,14 +44,20 @@ namespace LocalDiskServer
     {
         public static readonly List<ShellInfo> availableShells = new List<ShellInfo>();
         
+        public const string APP_VERSION = "1.1.0";
+
         public static NotifyIcon trayIcon;
+        public static MenuItem versionMenuItem;
         public static MenuItem statusMenuItem;
         public static MenuItem openHomeMenuItem;
+        public static MenuItem openConfigFileMenuItem;
+        public static MenuItem openAppDirMenuItem;
         public static MenuItem viewLogsMenuItem;
         public static MenuItem configTextExtMenuItem;
         public static MenuItem plainPortMenuItem;
         public static MenuItem sslPortMenuItem;
         public static MenuItem httpsToggleMenuItem;
+        public static MenuItem devEcosystemMenuItem;
         public static MenuItem languageSubMenu;
         public static MenuItem startupMenuItem;
         public static MenuItem exitMenuItem;
@@ -58,6 +66,7 @@ namespace LocalDiskServer
         public static int port = 1234;
         public static int https_port = 1235;
         public static bool use_https = false;
+        public static bool enable_dev_ecosystem = false;
         public static string ssl_hash = "";
         public static int last_bound_https_port = 1235;
         public static string language = "";
@@ -135,8 +144,11 @@ namespace LocalDiskServer
             // 启动标准多线程 HTTP 服务器
             HttpServer.StartServer();
 
-            // 启动后台线程异步扫描 Gradle 缓存与 Wrapper
-            GradleExplorer.TriggerGradleScanAsync();
+            // 若启用了开发者生态管理，才启动后台线程异步扫描
+            if (enable_dev_ecosystem)
+            {
+                GradleExplorer.TriggerGradleScanAsync();
+            }
         }
 
         public static void Log(string msg)
@@ -266,6 +278,15 @@ namespace LocalDiskServer
                         {
                             language = line.Substring(9).Trim();
                         }
+                        else if (line.StartsWith("enable_dev_ecosystem=", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string devEcoStr = line.Substring(21).Trim();
+                            bool parsedEco;
+                            if (bool.TryParse(devEcoStr, out parsedEco))
+                            {
+                                enable_dev_ecosystem = parsedEco;
+                            }
+                        }
                     }
                     Log(I18nManager.T("log_config_loaded", port, https_port, string.IsNullOrEmpty(language) ? I18nManager.T("common_auto_match") : language));
                 }
@@ -292,6 +313,11 @@ namespace LocalDiskServer
             }
         }
 
+        public static string GetConfigFilePath()
+        {
+            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, configFile);
+        }
+
         public void SaveConfig()
         {
             SaveConfigStatic();
@@ -301,8 +327,7 @@ namespace LocalDiskServer
         {
             try
             {
-                string exeDir = AppDomain.CurrentDomain.BaseDirectory;
-                string configPath = Path.Combine(exeDir, configFile);
+                string configPath = GetConfigFilePath();
                 StringBuilder sb = new StringBuilder();
                 sb.AppendLine("port=" + port);
                 sb.AppendLine("https_port=" + https_port);
@@ -312,6 +337,7 @@ namespace LocalDiskServer
                 sb.AppendLine("text_extensions=" + textExtensionsStr);
                 sb.AppendLine("favorites=" + favoritesStr);
                 sb.AppendLine("language=" + (language ?? ""));
+                sb.AppendLine("enable_dev_ecosystem=" + enable_dev_ecosystem);
                 File.WriteAllText(configPath, sb.ToString());
                 Log(I18nManager.T("log_config_saved"));
             }
@@ -325,6 +351,10 @@ namespace LocalDiskServer
         {
             ContextMenu trayMenu = new ContextMenu();
 
+            versionMenuItem = new MenuItem(string.Format("LocalDiskServer v{0}", APP_VERSION));
+            versionMenuItem.Enabled = false;
+            trayMenu.MenuItems.Add(versionMenuItem);
+
             statusMenuItem = new MenuItem(I18nManager.T("menu_status_stopped"));
             statusMenuItem.Enabled = false;
             trayMenu.MenuItems.Add(statusMenuItem);
@@ -332,10 +362,14 @@ namespace LocalDiskServer
             trayMenu.MenuItems.Add(new MenuItem("-"));
 
             openHomeMenuItem = new MenuItem(I18nManager.T("menu_open_home"), OpenBrowser);
+            openConfigFileMenuItem = new MenuItem(I18nManager.T("menu_open_config"), OpenConfigFile);
+            openAppDirMenuItem = new MenuItem(I18nManager.T("menu_open_app_dir"), OpenAppDirectory);
             viewLogsMenuItem = new MenuItem(I18nManager.T("menu_view_logs"), OpenLogs);
             configTextExtMenuItem = new MenuItem(I18nManager.T("menu_config_text_ext"), ChangeTextExtensions);
 
             trayMenu.MenuItems.Add(openHomeMenuItem);
+            trayMenu.MenuItems.Add(openConfigFileMenuItem);
+            trayMenu.MenuItems.Add(openAppDirMenuItem);
             trayMenu.MenuItems.Add(viewLogsMenuItem);
             trayMenu.MenuItems.Add(configTextExtMenuItem);
 
@@ -347,6 +381,10 @@ namespace LocalDiskServer
             trayMenu.MenuItems.Add(plainPortMenuItem);
             trayMenu.MenuItems.Add(sslPortMenuItem);
             trayMenu.MenuItems.Add(httpsToggleMenuItem);
+
+            devEcosystemMenuItem = new MenuItem(I18nManager.T("menu_dev_ecosystem"), ToggleDevEcosystem);
+            devEcosystemMenuItem.Checked = enable_dev_ecosystem;
+            trayMenu.MenuItems.Add(devEcosystemMenuItem);
 
             // 动态构建多语言二级子菜单
             languageSubMenu = new MenuItem(I18nManager.T("menu_language"));
@@ -435,7 +473,10 @@ namespace LocalDiskServer
 
         public static void UpdateMenuTexts()
         {
+            if (versionMenuItem != null) versionMenuItem.Text = string.Format("LocalDiskServer v{0}", APP_VERSION);
             if (openHomeMenuItem != null) openHomeMenuItem.Text = I18nManager.T("menu_open_home");
+            if (openConfigFileMenuItem != null) openConfigFileMenuItem.Text = I18nManager.T("menu_open_config");
+            if (openAppDirMenuItem != null) openAppDirMenuItem.Text = I18nManager.T("menu_open_app_dir");
             if (viewLogsMenuItem != null) viewLogsMenuItem.Text = I18nManager.T("menu_view_logs");
             if (configTextExtMenuItem != null) configTextExtMenuItem.Text = I18nManager.T("menu_config_text_ext");
             if (plainPortMenuItem != null) plainPortMenuItem.Text = I18nManager.T("menu_config_plain_port", port);
@@ -444,6 +485,11 @@ namespace LocalDiskServer
             {
                 httpsToggleMenuItem.Text = I18nManager.T("menu_toggle_https");
                 httpsToggleMenuItem.Checked = use_https;
+            }
+            if (devEcosystemMenuItem != null)
+            {
+                devEcosystemMenuItem.Text = I18nManager.T("menu_dev_ecosystem");
+                devEcosystemMenuItem.Checked = enable_dev_ecosystem;
             }
             if (languageSubMenu != null)
             {
@@ -500,6 +546,36 @@ namespace LocalDiskServer
             catch (Exception ex)
             {
                 MessageBox.Show(I18nManager.T("dialog_open_browser_fail", ex.Message), I18nManager.T("dialog_error"), MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void OpenConfigFile(object sender, EventArgs e)
+        {
+            string configPath = GetConfigFilePath();
+            if (!File.Exists(configPath))
+            {
+                SaveConfig();
+            }
+            try
+            {
+                Process.Start(new ProcessStartInfo(configPath) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(I18nManager.T("dialog_open_file_fail", ex.Message), I18nManager.T("dialog_warning"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void OpenAppDirectory(object sender, EventArgs e)
+        {
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            try
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", "\"" + baseDir + "\"") { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(I18nManager.T("dialog_open_dir_fail", ex.Message), I18nManager.T("dialog_warning"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -581,9 +657,24 @@ namespace LocalDiskServer
 
         private void ChangeTextExtensions(object sender, EventArgs e)
         {
-            string input = ShowInputDialog(I18nManager.T("dialog_text_ext_title"), I18nManager.T("dialog_text_ext_prompt"), textExtensionsStr, true);
+            string[] exts = (textExtensionsStr ?? "").Split(new char[] { ',', '，', ';', '；', '\r', '\n', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            string defaultDisplay = string.Join(", ", exts);
+
+            string input = ShowInputDialog(I18nManager.T("dialog_text_ext_title"), I18nManager.T("dialog_text_ext_prompt"), defaultDisplay, true);
             if (input == null) return;
-            textExtensionsStr = input.Trim();
+
+            string[] rawParts = input.Split(new char[] { ',', '，', ';', '；', '\r', '\n', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            List<string> cleanList = new List<string>();
+            foreach (string raw in rawParts)
+            {
+                string trimmed = raw.Trim().TrimStart('.').ToLower();
+                if (!string.IsNullOrEmpty(trimmed) && !cleanList.Contains(trimmed))
+                {
+                    cleanList.Add(trimmed);
+                }
+            }
+
+            textExtensionsStr = string.Join(",", cleanList.ToArray());
             SaveConfig();
             Log(I18nManager.T("log_text_ext_updated"));
         }
@@ -616,6 +707,26 @@ namespace LocalDiskServer
 
         private bool SetStartup(bool enable)
         {
+            return SetStartupStatic(enable);
+        }
+
+        public static bool IsStartupEnabledStatic()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", false))
+                {
+                    if (key == null) return false;
+                    object val = key.GetValue("LocalDiskServer");
+                    if (val == null) return false;
+                    return val.ToString().Equals(Application.ExecutablePath, StringComparison.OrdinalIgnoreCase);
+                }
+            }
+            catch { return false; }
+        }
+
+        public static bool SetStartupStatic(bool enable)
+        {
             try
             {
                 using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true))
@@ -629,6 +740,7 @@ namespace LocalDiskServer
                     {
                         key.DeleteValue("LocalDiskServer", false);
                     }
+                    if (startupMenuItem != null) startupMenuItem.Checked = enable;
                     return true;
                 }
             }
@@ -636,6 +748,313 @@ namespace LocalDiskServer
             {
                 MessageBox.Show(I18nManager.T("dialog_startup_fail", ex.Message), I18nManager.T("dialog_tip"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
+            }
+        }
+
+        public static bool HandleSettingsApi(string rawPath, HttpListenerRequest request, HttpListenerResponse response)
+        {
+            if (rawPath.Equals("api/settings", StringComparison.OrdinalIgnoreCase) && request.HttpMethod == "GET")
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.Append("{");
+                sb.Append("\"success\":true,");
+                sb.AppendFormat("\"version\":\"{0}\",", HttpServer.EscapeJson(APP_VERSION));
+                sb.AppendFormat("\"port\":{0},", port);
+                sb.AppendFormat("\"https_port\":{0},", https_port);
+                sb.AppendFormat("\"use_https\":{0},", use_https ? "true" : "false");
+                sb.AppendFormat("\"enable_dev_ecosystem\":{0},", enable_dev_ecosystem ? "true" : "false");
+                sb.AppendFormat("\"text_extensions\":\"{0}\",", HttpServer.EscapeJson(textExtensionsStr ?? ""));
+                sb.AppendFormat("\"language\":\"{0}\",", HttpServer.EscapeJson(language ?? ""));
+                sb.AppendFormat("\"startup_enabled\":{0},", IsStartupEnabledStatic() ? "true" : "false");
+                
+                sb.Append("\"languages\":[");
+                var langList = I18nManager.GetAvailableLanguages();
+                for (int i = 0; i < langList.Count; i++)
+                {
+                    if (i > 0) sb.Append(",");
+                    sb.AppendFormat("{{\"code\":\"{0}\",\"name\":\"{1}\"}}", HttpServer.EscapeJson(langList[i].Code), HttpServer.EscapeJson(langList[i].Name));
+                }
+                sb.Append("]");
+                sb.Append("}");
+                HttpServer.ServeJson(response, 200, sb.ToString());
+                return true;
+            }
+
+            if (rawPath.Equals("api/settings/open-config", StringComparison.OrdinalIgnoreCase) && request.HttpMethod == "POST")
+            {
+                string configPath = GetConfigFilePath();
+                if (!File.Exists(configPath))
+                {
+                    SaveConfigStatic();
+                }
+                try
+                {
+                    Process.Start(new ProcessStartInfo(configPath) { UseShellExecute = true });
+                    HttpServer.ServeJson(response, 200, "{\"success\":true}");
+                }
+                catch (Exception ex)
+                {
+                    HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(ex.Message) + "\"}");
+                }
+                return true;
+            }
+
+            if (rawPath.Equals("api/settings/open-app-dir", StringComparison.OrdinalIgnoreCase) && request.HttpMethod == "POST")
+            {
+                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                try
+                {
+                    Process.Start(new ProcessStartInfo("explorer.exe", "\"" + baseDir + "\"") { UseShellExecute = true });
+                    HttpServer.ServeJson(response, 200, "{\"success\":true}");
+                }
+                catch (Exception ex)
+                {
+                    HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(ex.Message) + "\"}");
+                }
+                return true;
+            }
+
+            if (rawPath.Equals("api/settings/cache-info", StringComparison.OrdinalIgnoreCase) && request.HttpMethod == "GET")
+            {
+                try
+                {
+                    string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                    string cacheDir = Path.Combine(baseDir, "cache");
+                    long totalBytes = 0;
+                    if (Directory.Exists(cacheDir))
+                    {
+                        var di = new DirectoryInfo(cacheDir);
+                        foreach (var fi in di.GetFiles("*", SearchOption.AllDirectories))
+                        {
+                            totalBytes += fi.Length;
+                        }
+                    }
+                    string formattedSize = HttpServer.FormatFileSize(totalBytes);
+                    string respJson = string.Format("{{\"success\":true,\"bytes\":{0},\"size\":\"{1}\",\"cacheDir\":\"{2}\"}}",
+                        totalBytes, HttpServer.EscapeJson(formattedSize), HttpServer.EscapeJson(cacheDir));
+                    HttpServer.ServeJson(response, 200, respJson);
+                }
+                catch (Exception ex)
+                {
+                    HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(ex.Message) + "\"}");
+                }
+                return true;
+            }
+
+            if (rawPath.Equals("api/settings/open-cache-dir", StringComparison.OrdinalIgnoreCase) && request.HttpMethod == "POST")
+            {
+                try
+                {
+                    string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                    string cacheDir = Path.Combine(baseDir, "cache");
+                    if (!Directory.Exists(cacheDir))
+                    {
+                        Directory.CreateDirectory(cacheDir);
+                    }
+                    Process.Start(new ProcessStartInfo("explorer.exe", "\"" + cacheDir + "\"") { UseShellExecute = true });
+                    HttpServer.ServeJson(response, 200, "{\"success\":true}");
+                }
+                catch (Exception ex)
+                {
+                    HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(ex.Message) + "\"}");
+                }
+                return true;
+            }
+
+            if (rawPath.Equals("api/settings/clear-cache", StringComparison.OrdinalIgnoreCase) && request.HttpMethod == "POST")
+            {
+                try
+                {
+                    string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                    string cacheDir = Path.Combine(baseDir, "cache");
+                    if (Directory.Exists(cacheDir))
+                    {
+                        var di = new DirectoryInfo(cacheDir);
+                        foreach (var file in di.GetFiles())
+                        {
+                            try { file.Delete(); } catch { }
+                        }
+                        foreach (var dir in di.GetDirectories())
+                        {
+                            try { dir.Delete(true); } catch { }
+                        }
+                    }
+
+                    // 重新从程序集内嵌资源提取预置语言文件并重载
+                    I18nManager.ForceExtractDefaultLocales();
+                    I18nManager.LoadLanguage(I18nManager.CurrentLanguageCode);
+
+                    // 释放开发者生态内存缓存
+                    if (enable_dev_ecosystem)
+                    {
+                        GradleExplorer.ClearCacheAndReleaseResources();
+                    }
+
+                    Log(I18nManager.T("log_cache_cleared"));
+                    HttpServer.ServeJson(response, 200, "{\"success\":true,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("settings_cache_cleared")) + "\"}");
+                }
+                catch (Exception ex)
+                {
+                    HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("settings_cache_clear_fail", ex.Message)) + "\"}");
+                }
+                return true;
+            }
+
+            if (rawPath.Equals("api/settings/save", StringComparison.OrdinalIgnoreCase) && request.HttpMethod == "POST")
+            {
+                try
+                {
+                    string body = "";
+                    using (var reader = new StreamReader(request.InputStream, Encoding.UTF8))
+                    {
+                        body = reader.ReadToEnd();
+                    }
+
+                    int newPort = port;
+                    int newHttpsPort = https_port;
+                    bool newUseHttps = use_https;
+                    bool newDevEcosystem = enable_dev_ecosystem;
+                    string newTextExt = textExtensionsStr;
+                    string newLang = language;
+                    bool newStartup = IsStartupEnabledStatic();
+
+                    var jsonPairs = ExtractSimpleJsonPairs(body);
+                    if (jsonPairs.ContainsKey("port")) int.TryParse(jsonPairs["port"], out newPort);
+                    if (jsonPairs.ContainsKey("https_port")) int.TryParse(jsonPairs["https_port"], out newHttpsPort);
+                    if (jsonPairs.ContainsKey("use_https")) bool.TryParse(jsonPairs["use_https"], out newUseHttps);
+                    if (jsonPairs.ContainsKey("enable_dev_ecosystem")) bool.TryParse(jsonPairs["enable_dev_ecosystem"], out newDevEcosystem);
+                    if (jsonPairs.ContainsKey("text_extensions")) newTextExt = jsonPairs["text_extensions"];
+                    if (jsonPairs.ContainsKey("language")) newLang = jsonPairs["language"];
+                    if (jsonPairs.ContainsKey("startup_enabled")) bool.TryParse(jsonPairs["startup_enabled"], out newStartup);
+
+                    if (newPort < 1 || newPort > 65535) newPort = port;
+                    if (newHttpsPort < 1 || newHttpsPort > 65535) newHttpsPort = https_port;
+
+                    string[] rawParts = (newTextExt ?? "").Split(new char[] { ',', '，', ';', '；', '\r', '\n', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                    List<string> cleanList = new List<string>();
+                    foreach (string raw in rawParts)
+                    {
+                        string trimmed = raw.Trim().TrimStart('.').ToLower();
+                        if (!string.IsNullOrEmpty(trimmed) && !cleanList.Contains(trimmed))
+                        {
+                            cleanList.Add(trimmed);
+                        }
+                    }
+                    textExtensionsStr = string.Join(",", cleanList.ToArray());
+
+                    if (!string.IsNullOrEmpty(newLang) && !string.Equals(newLang, language, StringComparison.OrdinalIgnoreCase))
+                    {
+                        SetLanguage(newLang);
+                    }
+
+                    SetStartupStatic(newStartup);
+
+                    if (newDevEcosystem != enable_dev_ecosystem)
+                    {
+                        enable_dev_ecosystem = newDevEcosystem;
+                        if (devEcosystemMenuItem != null) devEcosystemMenuItem.Checked = enable_dev_ecosystem;
+                        if (enable_dev_ecosystem)
+                        {
+                            Log(I18nManager.T("log_dev_ecosystem_updated", I18nManager.T("common_enabled")));
+                            GradleExplorer.TriggerGradleScanAsync();
+                        }
+                        else
+                        {
+                            Log(I18nManager.T("log_dev_ecosystem_updated", I18nManager.T("common_disabled")));
+                            GradleExplorer.ClearCacheAndReleaseResources();
+                        }
+                    }
+
+                    bool portChanged = (newPort != port || newHttpsPort != https_port || newUseHttps != use_https);
+                    int oldHttpsPort = last_bound_https_port;
+
+                    if (newUseHttps && !use_https)
+                    {
+                        Log(I18nManager.T("log_enabling_https"));
+                        SslManager.BindSslCertificate(newHttpsPort, 0);
+                    }
+                    else if (!newUseHttps && use_https)
+                    {
+                        Log(I18nManager.T("log_disabling_https", https_port));
+                        SslManager.UnbindSslCertificate(oldHttpsPort);
+                    }
+                    else if (newUseHttps && use_https && newHttpsPort != https_port)
+                    {
+                        Log(I18nManager.T("log_rebinding_https", oldHttpsPort, newHttpsPort));
+                        SslManager.BindSslCertificate(newHttpsPort, oldHttpsPort);
+                    }
+
+                    port = newPort;
+                    https_port = newHttpsPort;
+                    use_https = newUseHttps;
+
+                    SaveConfigStatic();
+                    UpdateMenuTexts();
+
+                    string respJson = string.Format("{{\"success\":true,\"portChanged\":{0},\"newPort\":{1},\"newHttpsPort\":{2},\"useHttps\":{3}}}",
+                        portChanged ? "true" : "false", port, https_port, use_https ? "true" : "false");
+                    HttpServer.ServeJson(response, 200, respJson);
+
+                    if (portChanged)
+                    {
+                        ThreadPool.QueueUserWorkItem(state =>
+                        {
+                            Thread.Sleep(300);
+                            HttpServer.StartServer();
+                            UpdateMenuTexts();
+                        });
+                    }
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(ex.Message) + "\"}");
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static Dictionary<string, string> ExtractSimpleJsonPairs(string json)
+        {
+            var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrEmpty(json)) return dict;
+            json = json.Trim();
+            if (json.StartsWith("{") && json.EndsWith("}"))
+            {
+                json = json.Substring(1, json.Length - 2);
+            }
+
+            var matches = System.Text.RegularExpressions.Regex.Matches(json, @"\""([^\""\\]*(?:\\.[^\""\\]*)*)\""\s*:\s*(?:\""([^\""\\]*(?:\\.[^\""\\]*)*)\""|([^,\}\s]+))");
+            foreach (System.Text.RegularExpressions.Match m in matches)
+            {
+                string key = m.Groups[1].Value;
+                string val = m.Groups[2].Success ? m.Groups[2].Value.Replace("\\\"", "\"").Replace("\\\\", "\\").Replace("\\n", "\n").Replace("\\r", "\r") : m.Groups[3].Value;
+                dict[key] = val;
+            }
+            return dict;
+        }
+
+        private void ToggleDevEcosystem(object sender, EventArgs e)
+        {
+            enable_dev_ecosystem = !enable_dev_ecosystem;
+            if (devEcosystemMenuItem != null)
+            {
+                devEcosystemMenuItem.Checked = enable_dev_ecosystem;
+            }
+            SaveConfig();
+            UpdateMenuTexts();
+
+            if (enable_dev_ecosystem)
+            {
+                Log(I18nManager.T("log_dev_ecosystem_updated", I18nManager.T("common_enabled")));
+                GradleExplorer.TriggerGradleScanAsync();
+            }
+            else
+            {
+                Log(I18nManager.T("log_dev_ecosystem_updated", I18nManager.T("common_disabled")));
+                GradleExplorer.ClearCacheAndReleaseResources();
             }
         }
 
@@ -662,6 +1081,8 @@ namespace LocalDiskServer
             TextBox textBox = new TextBox();
             Button buttonOk = new Button();
             Button buttonCancel = new Button();
+            Button buttonToggle = null;
+            Label hintLabel = null;
 
             form.Text = title;
             label.Text = promptText;
@@ -673,20 +1094,63 @@ namespace LocalDiskServer
             buttonCancel.DialogResult = DialogResult.Cancel;
 
             label.AutoSize = true;
-            label.SetBounds(9, 15, 372, 15);
+            label.SetBounds(12, 12, 416, 18);
 
             if (multiline)
             {
                 textBox.Multiline = true;
                 textBox.ScrollBars = ScrollBars.Vertical;
-                textBox.WordWrap = true;
+                textBox.WordWrap = false;
                 textBox.AcceptsReturn = true;
-                textBox.SetBounds(12, 40, 372, 180);
+                try
+                {
+                    textBox.Font = new Font("Consolas", 9.5f, FontStyle.Regular);
+                }
+                catch {}
+                textBox.SetBounds(12, 34, 416, 220);
 
-                buttonOk.SetBounds(228, 235, 75, 23);
-                buttonCancel.SetBounds(309, 235, 75, 23);
+                buttonToggle = new Button();
+                buttonToggle.Text = I18nManager.T("dialog_text_ext_toggle_format");
+                buttonToggle.SetBounds(12, 262, 180, 26);
+                buttonToggle.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+                buttonToggle.Click += (s, e) =>
+                {
+                    string current = textBox.Text;
+                    if (current.Contains("\n"))
+                    {
+                        string[] p = current.Split(new char[] { ',', '，', ';', '；', '\r', '\n', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        List<string> list = new List<string>();
+                        foreach (string raw in p)
+                        {
+                            string t = raw.Trim().TrimStart('.').ToLower();
+                            if (!string.IsNullOrEmpty(t) && !list.Contains(t)) list.Add(t);
+                        }
+                        textBox.Text = string.Join(", ", list.ToArray());
+                    }
+                    else
+                    {
+                        string[] p = current.Split(new char[] { ',', '，', ';', '；', '\r', '\n', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        List<string> list = new List<string>();
+                        foreach (string raw in p)
+                        {
+                            string t = raw.Trim().TrimStart('.').ToLower();
+                            if (!string.IsNullOrEmpty(t) && !list.Contains(t)) list.Add(t);
+                        }
+                        textBox.Text = string.Join(Environment.NewLine, list.ToArray());
+                    }
+                };
 
-                form.ClientSize = new Size(396, 270);
+                hintLabel = new Label();
+                hintLabel.Text = I18nManager.T("dialog_text_ext_hint");
+                hintLabel.ForeColor = Color.Gray;
+                hintLabel.Font = new Font(form.Font.FontFamily, 8f);
+                hintLabel.SetBounds(12, 296, 416, 18);
+                hintLabel.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+
+                buttonOk.SetBounds(268, 262, 75, 26);
+                buttonCancel.SetBounds(353, 262, 75, 26);
+
+                form.ClientSize = new Size(440, 324);
             }
             else
             {
@@ -700,13 +1164,19 @@ namespace LocalDiskServer
             textBox.Anchor = textBox.Anchor | AnchorStyles.Right;
             if (multiline)
             {
-                textBox.Anchor = textBox.Anchor | AnchorStyles.Bottom;
+                textBox.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             }
             buttonOk.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             buttonCancel.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
 
-            form.Controls.AddRange(new Control[] { label, textBox, buttonOk, buttonCancel });
-            form.ClientSize = new Size(Math.Max(396, label.Right + 10), form.ClientSize.Height);
+            if (multiline && buttonToggle != null && hintLabel != null)
+            {
+                form.Controls.AddRange(new Control[] { label, textBox, buttonToggle, buttonOk, buttonCancel, hintLabel });
+            }
+            else
+            {
+                form.Controls.AddRange(new Control[] { label, textBox, buttonOk, buttonCancel });
+            }
             form.FormBorderStyle = FormBorderStyle.FixedDialog;
             form.StartPosition = FormStartPosition.CenterScreen;
             form.MinimizeBox = false;

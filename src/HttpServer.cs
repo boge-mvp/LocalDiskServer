@@ -289,6 +289,7 @@ namespace LocalDiskServer
 
             try
             {
+                if (ServerApplicationContext.HandleSettingsApi(rawPath, request, response)) return;
                 if (Logger.HandleApi(rawPath, request, response)) return;
                 if (GradleExplorer.HandleApi(rawPath, request, response)) return;
                 if (FileExplorer.HandleApi(rawPath, request, response)) return;
@@ -409,11 +410,39 @@ namespace LocalDiskServer
             
             string footerHtml = html.Replace("{SHELLS_JSON}", shellsJson);
             footerHtml = footerHtml.Replace("{VERSION_HASH}", versionHash);
+            footerHtml = footerHtml.Replace("{APP_VERSION}", ServerApplicationContext.APP_VERSION);
             footerHtml = footerHtml.Replace("{MODAL_PROPERTIES_TITLE}", I18nManager.T("modal_properties_title"));
             footerHtml = footerHtml.Replace("{MODAL_BTN_OK}", I18nManager.T("modal_btn_ok"));
             footerHtml = footerHtml.Replace("{MENU_VIEW_LOGS}", I18nManager.T("menu_view_logs"));
             footerHtml = footerHtml.Replace("{MODAL_LOGS_TITLE}", I18nManager.T("modal_logs_title"));
             footerHtml = footerHtml.Replace("{MODAL_LOGS_BTN_CLEAR}", I18nManager.T("modal_logs_btn_clear"));
+            
+            // Settings Modal Placeholders
+            footerHtml = footerHtml.Replace("{SETTINGS_MODAL_TITLE}", I18nManager.T("settings_modal_title"));
+            footerHtml = footerHtml.Replace("{SETTINGS_SEC_NETWORK}", I18nManager.T("settings_sec_network"));
+            footerHtml = footerHtml.Replace("{SETTINGS_HTTP_PORT}", I18nManager.T("settings_http_port"));
+            footerHtml = footerHtml.Replace("{SETTINGS_HTTPS_PORT}", I18nManager.T("settings_https_port"));
+            footerHtml = footerHtml.Replace("{SETTINGS_USE_HTTPS}", I18nManager.T("settings_use_https"));
+            footerHtml = footerHtml.Replace("{SETTINGS_SEC_FEATURES}", I18nManager.T("settings_sec_features"));
+            footerHtml = footerHtml.Replace("{SETTINGS_ENABLE_DEV}", I18nManager.T("settings_enable_dev"));
+            footerHtml = footerHtml.Replace("{SETTINGS_SEC_CACHE}", I18nManager.T("settings_sec_cache"));
+            footerHtml = footerHtml.Replace("{SETTINGS_CACHE_SIZE_LABEL}", I18nManager.T("settings_cache_size_label"));
+            footerHtml = footerHtml.Replace("{SETTINGS_CACHE_CALCULATING}", I18nManager.T("settings_cache_calculating"));
+            footerHtml = footerHtml.Replace("{SETTINGS_BTN_CLEAR_CACHE}", I18nManager.T("settings_btn_clear_cache"));
+            footerHtml = footerHtml.Replace("{SETTINGS_BTN_OPEN_CACHE_DIR}", I18nManager.T("settings_btn_open_cache_dir"));
+            footerHtml = footerHtml.Replace("{SETTINGS_SEC_GENERAL}", I18nManager.T("settings_sec_general"));
+            footerHtml = footerHtml.Replace("{SETTINGS_LANGUAGE}", I18nManager.T("settings_language"));
+            footerHtml = footerHtml.Replace("{SETTINGS_STARTUP}", I18nManager.T("settings_startup"));
+            footerHtml = footerHtml.Replace("{SETTINGS_SEC_TEXT_EXT}", I18nManager.T("settings_sec_text_ext"));
+            footerHtml = footerHtml.Replace("{SETTINGS_TEXT_EXT_DESC}", I18nManager.T("settings_text_ext_desc"));
+            footerHtml = footerHtml.Replace("{DIALOG_TEXT_EXT_TOGGLE_FORMAT}", I18nManager.T("dialog_text_ext_toggle_format"));
+            footerHtml = footerHtml.Replace("{SETTINGS_SEC_SYSTEM_OPS}", I18nManager.T("settings_sec_system_ops"));
+            footerHtml = footerHtml.Replace("{SETTINGS_BTN_OPEN_CONFIG}", I18nManager.T("settings_btn_open_config"));
+            footerHtml = footerHtml.Replace("{SETTINGS_BTN_OPEN_APP_DIR}", I18nManager.T("settings_btn_open_app_dir"));
+            footerHtml = footerHtml.Replace("{SETTINGS_BTN_VIEW_LOGS}", I18nManager.T("settings_btn_view_logs"));
+            footerHtml = footerHtml.Replace("{SETTINGS_BTN_CANCEL}", I18nManager.T("settings_btn_cancel"));
+            footerHtml = footerHtml.Replace("{SETTINGS_BTN_SAVE}", I18nManager.T("settings_btn_save"));
+
             return footerHtml;
         }
 
@@ -565,6 +594,18 @@ namespace LocalDiskServer
         public static string GetTempSvg()
         { return @"<svg class='file-icon' width='36' height='36' viewBox='0 0 24 24' fill='none' stroke='#f39c12' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polygon points='13 2 3 14 12 14 11 22 21 10 12 10 13 2'></polygon></svg>"; }
 
+        public static string GetMavenSvg()
+        { return @"<svg class='file-icon' width='36' height='36' viewBox='0 0 24 24' fill='none' stroke='#c71a36' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5'/></svg>"; }
+
+        public static string GetNpmSvg()
+        { return @"<svg class='file-icon' width='36' height='36' viewBox='0 0 24 24' fill='none' stroke='#cb3837' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 5h18v14H3V5zm3 11h3V8H6v8zm5 0h3v-5h2V8h-5v8zm7 0h3V8h-3v8z'/></svg>"; }
+
+        public static string GetPnpmSvg()
+        { return @"<svg class='file-icon' width='36' height='36' viewBox='0 0 24 24' fill='none' stroke='#f69220' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='5' height='5' rx='1'></rect><rect x='9.5' y='3' width='5' height='5' rx='1'></rect><rect x='16' y='3' width='5' height='5' rx='1'></rect><rect x='3' y='9.5' width='5' height='5' rx='1'></rect><rect x='9.5' y='9.5' width='5' height='5' rx='1'></rect><rect x='16' y='9.5' width='5' height='5' rx='1'></rect><rect x='3' y='16' width='5' height='5' rx='1'></rect><rect x='9.5' y='16' width='5' height='5' rx='1'></rect></svg>"; }
+
+        public static string GetAndroidSvg()
+        { return @"<svg class='file-icon' width='36' height='36' viewBox='0 0 24 24' fill='none' stroke='#3ddc84' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M17 10V6a5 5 0 0 0-10 0v4'></path><line x1='8' y1='3' x2='6' y2='1'></line><line x1='16' y1='3' x2='18' y2='1'></line><circle cx='9' cy='7' r='1' fill='#3ddc84'></circle><circle cx='15' cy='7' r='1' fill='#3ddc84'></circle><rect x='4' y='10' width='16' height='11' rx='2'></rect></svg>"; }
+
         public static string GetQuickAccessSvg(string key)
         {
             switch (key)
@@ -593,13 +634,14 @@ namespace LocalDiskServer
             sb.Append("  <div class='toolbar-left'>");
             sb.Append("    <div class='address-bar-wrapper' onmousedown='activateAddressInput(event)'>");
             sb.Append("      <div class='breadcrumbs' id='breadcrumbs-bar'>");
-            sb.AppendFormat("        <span>🏠 {0}</span>", I18nManager.T("lobby_header_title"));
+            sb.AppendFormat("        <span>🏠 {0}</span><span class='app-version-tag'>v{1}</span>", I18nManager.T("lobby_header_title"), ServerApplicationContext.APP_VERSION);
             sb.Append("      </div>");
             sb.Append("      <input type='text' id='address-input' style='display: none;' onkeydown='handleAddressKey(event)' onblur='deactivateAddressInput()'>");
             sb.Append("    </div>");
             sb.AppendFormat("    <button id='protocol-switch-btn' onclick='toggleProtocol(event)' class='btn-back' style='height: 32px; padding: 0 10px; margin-left: 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px; flex-shrink: 0;' title='{0}'></button>", I18nManager.T("lobby_proto_toggle_title"));
             sb.Append("  </div>");
             sb.Append("  <div class='toolbar-right' style='display: flex; align-items: center; gap: 8px;'>");
+            sb.AppendFormat("    <button class='btn-toolbar-settings' onclick='showSettingsModal()' style='height: 32px; padding: 0 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px;' title='{0}'><span>⚙️</span> {0}</button>", I18nManager.T("lobby_settings_btn"));
             sb.Append("    <select id='view-select' onchange='setViewMode(this.value)' style='height: 32px; background: var(--container-bg); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 8px; cursor: pointer; outline: none; font-size: 0.85rem;'>");
             sb.AppendFormat("      <option value='details'>{0}</option>", I18nManager.T("lobby_view_details"));
             sb.AppendFormat("      <option value='large'>{0}</option>", I18nManager.T("lobby_view_large"));
@@ -662,23 +704,80 @@ namespace LocalDiskServer
                     "</a>",
                     q.WebPath, htmlEscapedPath, iconSvg, q.Title, q.Description);
             }
-
-            // 5. Gradle Dependency Browser Entry on Lobby
-             sb.AppendFormat(
-                 "<a href='/?view=gradle' class='card drive-card' data-path='/?view=gradle' data-type='dir'>" +
-                 "  <div class='icon-wrapper' style='font-size: 2rem; display: flex; align-items: center; justify-content: center;'>☕</div>" +
-                 "  <div class='card-info'>" +
-                 "    <div class='title'>{0}</div>" +
-                 "    <div class='desc'>{1}</div>" +
-                 "  </div>" +
-                 "</a>",
-                 I18nManager.T("lobby_gradle_title"), I18nManager.T("lobby_gradle_desc")
-             );
-
             sb.Append("</div>");
-            sb.Append("<hr style='border: 0; border-top: 1px solid var(--border-color); margin: 12px 0;'>");
 
-            // Section 2: Physical Drives
+            // Section 2: Developer Ecosystem & Package Repositories (Only when enabled)
+            if (ServerApplicationContext.enable_dev_ecosystem)
+            {
+                sb.Append("<hr style='border: 0; border-top: 1px solid var(--border-color); margin: 16px 0;'>");
+                sb.AppendFormat("<h2>📦 {0}</h2>", I18nManager.T("lobby_dev_ecosystem_title"));
+                sb.Append("<div class='grid'>");
+
+                // 1. Gradle (Ready)
+                sb.AppendFormat(
+                    "<a href='/?view=gradle' class='card drive-card' data-path='/?view=gradle' data-type='dir'>" +
+                    "  <div class='icon-wrapper' style='font-size: 2.2rem; display: flex; align-items: center; justify-content: center;'>☕</div>" +
+                    "  <div class='card-info'>" +
+                    "    <div class='title'>{0} <span class='dev-badge ready'>{1}</span></div>" +
+                    "    <div class='desc'>{2}</div>" +
+                    "  </div>" +
+                    "</a>",
+                    I18nManager.T("lobby_gradle_title"), I18nManager.T("tag_ready"), I18nManager.T("lobby_gradle_desc")
+                );
+
+                // 2. Maven (In Plan)
+                sb.AppendFormat(
+                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;'>" +
+                    "  <div class='icon-wrapper'>{0}</div>" +
+                    "  <div class='card-info'>" +
+                    "    <div class='title'>{1} <span class='dev-badge plan'>{2}</span></div>" +
+                    "    <div class='desc'>{3}</div>" +
+                    "  </div>" +
+                    "</div>",
+                    GetMavenSvg(), I18nManager.T("lobby_maven_title"), I18nManager.T("tag_coming_soon"), I18nManager.T("lobby_maven_desc")
+                );
+
+                // 3. NPM (In Plan)
+                sb.AppendFormat(
+                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;'>" +
+                    "  <div class='icon-wrapper'>{0}</div>" +
+                    "  <div class='card-info'>" +
+                    "    <div class='title'>{1} <span class='dev-badge plan'>{2}</span></div>" +
+                    "    <div class='desc'>{3}</div>" +
+                    "  </div>" +
+                    "</div>",
+                    GetNpmSvg(), I18nManager.T("lobby_npm_title"), I18nManager.T("tag_coming_soon"), I18nManager.T("lobby_npm_desc")
+                );
+
+                // 4. PNPM (In Plan)
+                sb.AppendFormat(
+                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;'>" +
+                    "  <div class='icon-wrapper'>{0}</div>" +
+                    "  <div class='card-info'>" +
+                    "    <div class='title'>{1} <span class='dev-badge plan'>{2}</span></div>" +
+                    "    <div class='desc'>{3}</div>" +
+                    "  </div>" +
+                    "</div>",
+                    GetPnpmSvg(), I18nManager.T("lobby_pnpm_title"), I18nManager.T("tag_coming_soon"), I18nManager.T("lobby_pnpm_desc")
+                );
+
+                // 5. Android (In Plan)
+                sb.AppendFormat(
+                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;'>" +
+                    "  <div class='icon-wrapper'>{0}</div>" +
+                    "  <div class='card-info'>" +
+                    "    <div class='title'>{1} <span class='dev-badge plan'>{2}</span></div>" +
+                    "    <div class='desc'>{3}</div>" +
+                    "  </div>" +
+                    "</div>",
+                    GetAndroidSvg(), I18nManager.T("lobby_android_title"), I18nManager.T("tag_coming_soon"), I18nManager.T("lobby_android_desc")
+                );
+
+                sb.Append("</div>");
+            }
+            sb.Append("<hr style='border: 0; border-top: 1px solid var(--border-color); margin: 16px 0;'>");
+
+            // Section 3: Physical Drives
             sb.AppendFormat("<h2>💾 {0}</h2>", I18nManager.T("lobby_drives_title"));
             sb.Append("<div class='grid'>");
 
@@ -706,6 +805,17 @@ namespace LocalDiskServer
                 }
             }
             sb.Append("</div>");
+
+            sb.AppendFormat(
+                "<div class='lobby-footer'>" +
+                "  <span class='lobby-footer-title'>⚡ LocalDiskServer <span class='lobby-footer-ver'>v{0}</span></span>" +
+                "  <span class='lobby-footer-sep'>·</span>" +
+                "  <button type='button' class='lobby-footer-link' onclick='showSettingsModal()'>⚙️ {1}</button>" +
+                "  <span class='lobby-footer-sep'>·</span>" +
+                "  <button type='button' class='lobby-footer-link' onclick='showLogs()'>📝 {2}</button>" +
+                "</div>",
+                ServerApplicationContext.APP_VERSION, I18nManager.T("lobby_settings_btn"), I18nManager.T("menu_view_logs")
+            );
 
             sb.Append(HttpServer.GetHtmlFooter());
 

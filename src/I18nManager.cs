@@ -57,6 +57,38 @@ namespace LocalDiskServer
             }
         }
 
+        public static void ForceExtractDefaultLocales()
+        {
+            try
+            {
+                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                string localesDir = Path.Combine(baseDir, "locales");
+                if (!Directory.Exists(localesDir))
+                {
+                    Directory.CreateDirectory(localesDir);
+                }
+
+                string[] defaultLocales = new string[] { "zh-CN.ini", "en-US.ini" };
+                foreach (string localeFile in defaultLocales)
+                {
+                    string targetPath = Path.Combine(localesDir, localeFile);
+                    Stream stream = GetResourceStream("locales/" + localeFile);
+                    if (stream != null)
+                    {
+                        using (stream)
+                        using (FileStream fs = new FileStream(targetPath, FileMode.Create, FileAccess.Write))
+                        {
+                            stream.CopyTo(fs);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log(T("log_i18n_extract_ex", ex.Message));
+            }
+        }
+
         public static void EnsureLocalesExtracted()
         {
             try

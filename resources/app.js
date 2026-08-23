@@ -562,6 +562,20 @@ document.addEventListener('DOMContentLoaded', () => {
             toggleFavIcon(e, starBtn.getAttribute('data-path'));
         }
     });
+
+    // Close modal when clicking background overlay
+    window.addEventListener('click', (e) => {
+        if (e.target && e.target.classList && e.target.classList.contains('modal')) {
+            e.target.style.display = 'none';
+        }
+    });
+
+    // Close modal on Escape key
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
+        }
+    });
 });
 
 function getSelectableItems() {
@@ -1231,6 +1245,31 @@ function toggleTreeNode(id) {
             children.style.display = 'none';
             arrow.classList.add('collapsed');
             arrow.innerText = '▶';
+        }
+    }
+}
+
+function toggleDevEcosystem(event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    const children = document.getElementById('children-dev-ecosystem');
+    if (children) {
+        const parentNode = children.parentElement;
+        const arrow = parentNode ? parentNode.querySelector('.tree-arrow') : null;
+        if (children.style.display === 'none') {
+            children.style.display = 'block';
+            if (arrow) {
+                arrow.classList.remove('collapsed');
+                arrow.innerText = '▼';
+            }
+        } else {
+            children.style.display = 'none';
+            if (arrow) {
+                arrow.classList.add('collapsed');
+                arrow.innerText = '▶';
+            }
         }
     }
 }
@@ -2408,4 +2447,184 @@ function showVersionFilesModal(event, group, artifact, version) {
 function closeFilesModal() {
     const modal = document.getElementById('files-modal');
     if (modal) modal.style.display = 'none';
+}
+
+// --- Settings Modal Logic ---
+function showSettingsModal() {
+    const modal = document.getElementById('settings-modal');
+    if (!modal) return;
+
+    fetch('/api/settings')
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) {
+                alert(data.message || 'Failed to load settings');
+                return;
+            }
+
+            document.getElementById('setting-port').value = data.port;
+            document.getElementById('setting-https-port').value = data.https_port;
+            document.getElementById('setting-use-https').checked = !!data.use_https;
+            document.getElementById('setting-enable-dev').checked = !!data.enable_dev_ecosystem;
+            document.getElementById('setting-startup').checked = !!data.startup_enabled;
+
+            const exts = (data.text_extensions || '').split(/[,;\s\r\n]+/).filter(Boolean);
+            document.getElementById('setting-text-ext').value = exts.join(', ');
+
+            const langSelect = document.getElementById('setting-language');
+            langSelect.innerHTML = '';
+            if (data.languages && data.languages.length > 0) {
+                data.languages.forEach(l => {
+                    const opt = document.createElement('option');
+                    opt.value = l.code;
+                    opt.textContent = l.name + ' (' + l.code + ')';
+                    if (l.code.toLowerCase() === (data.language || '').toLowerCase()) {
+                        opt.selected = true;
+                    }
+                    langSelect.appendChild(opt);
+                });
+            }
+
+            modal.style.display = 'flex';
+            loadAppCacheInfo();
+        })
+        .catch(err => {
+            alert('Failed to load settings: ' + err.message);
+        });
+}
+
+function loadAppCacheInfo() {
+    const sizeElem = document.getElementById('setting-cache-size');
+    if (!sizeElem) return;
+    sizeElem.textContent = window.t('settings_cache_calculating') || 'Calculating...';
+
+    fetch('/api/settings/cache-info')
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                sizeElem.textContent = data.size || '0 B';
+            } else {
+                sizeElem.textContent = 'Error';
+            }
+        })
+        .catch(() => {
+            sizeElem.textContent = 'Error';
+        });
+}
+
+function clearAppCache() {
+    const sizeElem = document.getElementById('setting-cache-size');
+    if (sizeElem) sizeElem.textContent = window.t('settings_cache_calculating') || 'Calculating...';
+
+    fetch('/api/settings/clear-cache', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                alert(data.message || (window.t('settings_cache_cleared') || 'Cache cleared successfully!'));
+                loadAppCacheInfo();
+                // 延时刷新当前页面以应用最新的本地化和清除后的状态
+                setTimeout(() => {
+                    window.location.reload();
+                }, 300);
+            } else {
+                alert(data.message || 'Failed to clear cache');
+                loadAppCacheInfo();
+            }
+        })
+        .catch(err => {
+            alert('Network error: ' + err.message);
+            loadAppCacheInfo();
+        });
+}
+
+function openAppCacheDir() {
+    fetch('/api/settings/open-cache-dir', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) alert(data.message || 'Failed to open cache directory');
+        })
+        .catch(err => alert('Network error: ' + err.message));
+}
+
+function closeSettingsModal() {
+    const modal = document.getElementById('settings-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+function toggleSettingsTextExtFormat() {
+    const textarea = document.getElementById('setting-text-ext');
+    if (!textarea) return;
+    const val = textarea.value.trim();
+    if (!val) return;
+
+    if (val.includes('\n')) {
+        const items = val.split(/[\r\n]+/).map(s => s.trim().replace(/^\./, '')).filter(Boolean);
+        textarea.value = items.join(', ');
+    } else {
+        const items = val.split(/[,;\s]+/).map(s => s.trim().replace(/^\./, '')).filter(Boolean);
+        textarea.value = items.join('\n');
+    }
+}
+
+function openSystemConfigFile() {
+    fetch('/api/settings/open-config', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) alert(data.message || 'Failed to open config file');
+        })
+        .catch(err => alert('Network error: ' + err.message));
+}
+
+function openSystemAppDir() {
+    fetch('/api/settings/open-app-dir', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) alert(data.message || 'Failed to open application directory');
+        })
+        .catch(err => alert('Network error: ' + err.message));
+}
+
+function saveSettingsForm() {
+    const btn = document.getElementById('settings-save-btn');
+    if (btn) btn.disabled = true;
+
+    const payload = {
+        port: parseInt(document.getElementById('setting-port').value, 10),
+        https_port: parseInt(document.getElementById('setting-https-port').value, 10),
+        use_https: document.getElementById('setting-use-https').checked,
+        enable_dev_ecosystem: document.getElementById('setting-enable-dev').checked,
+        startup_enabled: document.getElementById('setting-startup').checked,
+        language: document.getElementById('setting-language').value,
+        text_extensions: document.getElementById('setting-text-ext').value
+    };
+
+    fetch('/api/settings/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (btn) btn.disabled = false;
+        if (data.success) {
+            if (data.portChanged) {
+                alert(t('settings_port_changed_reconnect'));
+                const protocol = data.useHttps && location.protocol === 'https:' ? 'https:' : 'http:';
+                const targetPort = protocol === 'https:' ? data.newHttpsPort : data.newPort;
+                setTimeout(() => {
+                    location.href = `${protocol}//${location.hostname}:${targetPort}/`;
+                }, 1200);
+            } else {
+                alert(t('settings_save_success'));
+                closeSettingsModal();
+                location.reload();
+            }
+        } else {
+            alert(data.message || 'Failed to save settings');
+        }
+    })
+    .catch(err => {
+        if (btn) btn.disabled = false;
+        alert('Network error: ' + err.message);
+    });
 }
