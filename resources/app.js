@@ -743,21 +743,25 @@ function initContextMenu() {
     document.body.appendChild(contextMenu);
 
     document.addEventListener('contextmenu', (e) => {
-        const item = e.target.closest('.item-row, .drive-card, .fav-card');
-        if (e.target.closest('input, .toolbar')) return;
+        // 在输入控件中右键：放行浏览器原生菜单（方便原生复制/剪切/粘贴）
+        if (e.target.closest('input, textarea, select')) return;
 
+        const item = e.target.closest('.item-row, .drive-card, .fav-card');
+        if (!item) {
+            // 在页面空白处、表头、工具栏等非项目区域右键：放行浏览器默认菜单
+            if (contextMenu) contextMenu.style.display = 'none';
+            return;
+        }
+
+        // 仅在目标文件/目录/卡片项目上右键时拦截并弹出自定义操作菜单
         e.preventDefault();
         e.stopPropagation();
 
-        if (item) {
-            if (!selectedRows.has(item)) {
-                clearAllSelections();
-                selectRow(item);
-            }
-            renderContextMenu(e.clientX, e.clientY, true);
-        } else {
-            renderContextMenu(e.clientX, e.clientY, false);
+        if (!selectedRows.has(item)) {
+            clearAllSelections();
+            selectRow(item);
         }
+        renderContextMenu(e.clientX, e.clientY, true);
     });
 
     document.addEventListener('click', () => {

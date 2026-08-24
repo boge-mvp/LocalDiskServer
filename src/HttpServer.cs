@@ -715,11 +715,14 @@ namespace LocalDiskServer
 
                 // 1. Gradle (Ready)
                 sb.AppendFormat(
-                    "<a href='/?view=gradle' class='card drive-card' data-path='/?view=gradle' data-type='dir'>" +
+                    "<a href='/?view=gradle' class='card drive-card' data-path='/?view=gradle' data-type='dir' title='{0} ({1}) - {2}'>" +
                     "  <div class='icon-wrapper' style='font-size: 2.2rem; display: flex; align-items: center; justify-content: center;'>☕</div>" +
                     "  <div class='card-info'>" +
-                    "    <div class='title'>{0} <span class='dev-badge ready'>{1}</span></div>" +
-                    "    <div class='desc'>{2}</div>" +
+                    "    <div class='card-title-row'>" +
+                    "      <span class='title title-text' title='{0}'>{0}</span>" +
+                    "      <span class='dev-badge ready'>{1}</span>" +
+                    "    </div>" +
+                    "    <div class='desc' title='{2}'>{2}</div>" +
                     "  </div>" +
                     "</a>",
                     I18nManager.T("lobby_gradle_title"), I18nManager.T("tag_ready"), I18nManager.T("lobby_gradle_desc")
@@ -727,11 +730,14 @@ namespace LocalDiskServer
 
                 // 2. Maven (In Plan)
                 sb.AppendFormat(
-                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;'>" +
+                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;' title='{1} ({2}) - {3}'>" +
                     "  <div class='icon-wrapper'>{0}</div>" +
                     "  <div class='card-info'>" +
-                    "    <div class='title'>{1} <span class='dev-badge plan'>{2}</span></div>" +
-                    "    <div class='desc'>{3}</div>" +
+                    "    <div class='card-title-row'>" +
+                    "      <span class='title title-text' title='{1}'>{1}</span>" +
+                    "      <span class='dev-badge plan'>{2}</span>" +
+                    "    </div>" +
+                    "    <div class='desc' title='{3}'>{3}</div>" +
                     "  </div>" +
                     "</div>",
                     GetMavenSvg(), I18nManager.T("lobby_maven_title"), I18nManager.T("tag_coming_soon"), I18nManager.T("lobby_maven_desc")
@@ -739,11 +745,14 @@ namespace LocalDiskServer
 
                 // 3. NPM (In Plan)
                 sb.AppendFormat(
-                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;'>" +
+                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;' title='{1} ({2}) - {3}'>" +
                     "  <div class='icon-wrapper'>{0}</div>" +
                     "  <div class='card-info'>" +
-                    "    <div class='title'>{1} <span class='dev-badge plan'>{2}</span></div>" +
-                    "    <div class='desc'>{3}</div>" +
+                    "    <div class='card-title-row'>" +
+                    "      <span class='title title-text' title='{1}'>{1}</span>" +
+                    "      <span class='dev-badge plan'>{2}</span>" +
+                    "    </div>" +
+                    "    <div class='desc' title='{3}'>{3}</div>" +
                     "  </div>" +
                     "</div>",
                     GetNpmSvg(), I18nManager.T("lobby_npm_title"), I18nManager.T("tag_coming_soon"), I18nManager.T("lobby_npm_desc")
@@ -751,11 +760,14 @@ namespace LocalDiskServer
 
                 // 4. PNPM (In Plan)
                 sb.AppendFormat(
-                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;'>" +
+                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;' title='{1} ({2}) - {3}'>" +
                     "  <div class='icon-wrapper'>{0}</div>" +
                     "  <div class='card-info'>" +
-                    "    <div class='title'>{1} <span class='dev-badge plan'>{2}</span></div>" +
-                    "    <div class='desc'>{3}</div>" +
+                    "    <div class='card-title-row'>" +
+                    "      <span class='title title-text' title='{1}'>{1}</span>" +
+                    "      <span class='dev-badge plan'>{2}</span>" +
+                    "    </div>" +
+                    "    <div class='desc' title='{3}'>{3}</div>" +
                     "  </div>" +
                     "</div>",
                     GetPnpmSvg(), I18nManager.T("lobby_pnpm_title"), I18nManager.T("tag_coming_soon"), I18nManager.T("lobby_pnpm_desc")
@@ -763,11 +775,14 @@ namespace LocalDiskServer
 
                 // 5. Android (In Plan)
                 sb.AppendFormat(
-                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;'>" +
+                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;' title='{1} ({2}) - {3}'>" +
                     "  <div class='icon-wrapper'>{0}</div>" +
                     "  <div class='card-info'>" +
-                    "    <div class='title'>{1} <span class='dev-badge plan'>{2}</span></div>" +
-                    "    <div class='desc'>{3}</div>" +
+                    "    <div class='card-title-row'>" +
+                    "      <span class='title title-text' title='{1}'>{1}</span>" +
+                    "      <span class='dev-badge plan'>{2}</span>" +
+                    "    </div>" +
+                    "    <div class='desc' title='{3}'>{3}</div>" +
                     "  </div>" +
                     "</div>",
                     GetAndroidSvg(), I18nManager.T("lobby_android_title"), I18nManager.T("tag_coming_soon"), I18nManager.T("lobby_android_desc")
