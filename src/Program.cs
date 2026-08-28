@@ -148,6 +148,9 @@ namespace LocalDiskServer
             if (enable_dev_ecosystem)
             {
                 GradleExplorer.TriggerGradleScanAsync();
+                NpmExplorer.TriggerNpmScanAsync();
+                PnpmExplorer.TriggerPnpmScanAsync();
+                MavenExplorer.TriggerMavenScanAsync();
             }
         }
 
@@ -888,6 +891,9 @@ namespace LocalDiskServer
                     if (enable_dev_ecosystem)
                     {
                         GradleExplorer.ClearCacheAndReleaseResources();
+                        NpmExplorer.ClearCacheAndReleaseResources();
+                        PnpmExplorer.ClearCacheAndReleaseResources();
+                        MavenExplorer.ClearCacheAndReleaseResources();
                     }
 
                     Log(I18nManager.T("log_cache_cleared"));
@@ -956,12 +962,17 @@ namespace LocalDiskServer
                         if (enable_dev_ecosystem)
                         {
                             Log(I18nManager.T("log_dev_ecosystem_updated", I18nManager.T("common_enabled")));
-                            GradleExplorer.TriggerGradleScanAsync();
+                GradleExplorer.TriggerGradleScanAsync();
+                NpmExplorer.TriggerNpmScanAsync();
+                PnpmExplorer.TriggerPnpmScanAsync();
+                MavenExplorer.TriggerMavenScanAsync();
                         }
                         else
                         {
                             Log(I18nManager.T("log_dev_ecosystem_updated", I18nManager.T("common_disabled")));
                             GradleExplorer.ClearCacheAndReleaseResources();
+                            NpmExplorer.ClearCacheAndReleaseResources();
+                            PnpmExplorer.ClearCacheAndReleaseResources();
                         }
                     }
 
@@ -1016,7 +1027,7 @@ namespace LocalDiskServer
             return false;
         }
 
-        private static Dictionary<string, string> ExtractSimpleJsonPairs(string json)
+        public static Dictionary<string, string> ExtractSimpleJsonPairs(string json)
         {
             var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (string.IsNullOrEmpty(json)) return dict;
@@ -1050,11 +1061,16 @@ namespace LocalDiskServer
             {
                 Log(I18nManager.T("log_dev_ecosystem_updated", I18nManager.T("common_enabled")));
                 GradleExplorer.TriggerGradleScanAsync();
+                NpmExplorer.TriggerNpmScanAsync();
+                PnpmExplorer.TriggerPnpmScanAsync();
+                MavenExplorer.TriggerMavenScanAsync();
             }
             else
             {
                 Log(I18nManager.T("log_dev_ecosystem_updated", I18nManager.T("common_disabled")));
                 GradleExplorer.ClearCacheAndReleaseResources();
+                NpmExplorer.ClearCacheAndReleaseResources();
+                PnpmExplorer.ClearCacheAndReleaseResources();
             }
         }
 

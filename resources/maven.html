@@ -1,0 +1,174 @@
+<div class='explorer-main'>
+<div class='toolbar'>
+  <div class='toolbar-left'>
+    <div class='address-bar-wrapper'>
+      <div class='breadcrumbs'>
+        <a href='/'>🏠</a> <span class='separator'>/</span> <span class='breadcrumb-current'>🪶 {MAVEN_BREADCRUMB}</span>
+      </div>
+    </div>
+    <button id='protocol-switch-btn' onclick='toggleProtocol(event)' class='btn-back' style='height: 32px; padding: 0 10px; margin-left: 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px; flex-shrink: 0;' title='{LOBBY_PROTO_TOGGLE_TITLE}'></button>
+  </div>
+  <div class='toolbar-right' style='display: flex; align-items: center; gap: 8px;'>
+    <input type='text' id='maven-search-input' placeholder='{MAVEN_SEARCH_PLACEHOLDER}' oninput='onMavenSearchChange()' style='width: 280px; height: 32px; box-sizing: border-box; padding: 4px 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); font-size: 0.9rem;'>
+    <button class='btn-back' onclick='triggerMavenScan()' style='height: 32px; padding: 0 10px; margin-left: 0; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem;' id='maven-refresh-btn'>{MAVEN_BTN_RESCAN}</button>
+  </div>
+</div>
+<div class='explorer-scroll-area'>
+<div style='padding: 10px 14px; background: var(--container-bg); border: 1px solid var(--border-color); border-radius: 6px; margin-bottom: 12px; font-size: 0.85rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;'>
+  <div style='display: flex; align-items: center; gap: 8px; font-weight: bold; color: #D22E2F;'><span style='font-size:1.25rem;'>🪶</span> Maven</div>
+  <div style='display: flex; align-items: center; gap: 15px; flex-wrap: wrap;'>
+    <div><span style='color: var(--text-muted);'>{MAVEN_STAT_ARTIFACTS}:</span> <strong id='maven-stat-artifacts'>-</strong></div>
+    <div><span style='color: var(--text-muted);'>{MAVEN_STAT_SIZE}:</span> <strong id='maven-stat-size'>-</strong></div>
+    <div style='width: 1px; height: 12px; background: var(--border-color);'></div>
+    <div><span style='color: var(--text-muted);'>{MAVEN_STAT_PATH}:</span> <strong id='maven-stat-path' style='font-family: monospace; font-size: 0.8rem; color: var(--accent-hover); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block;'>-</strong></div>
+  </div>
+  <div style='display: flex; align-items: center; gap: 8px;'>
+    <button onclick='showMavenConfigModal()' class='pagination-btn' style='padding: 4px 10px; font-size: 0.82rem; font-weight: 500; border-color: var(--accent-color); color: var(--accent-hover);'>{MAVEN_BTN_CONFIG_DETAILS}</button>
+    <button onclick='openMavenRepo()' class='pagination-btn' style='padding: 4px 8px; font-size: 0.8rem;'>{MAVEN_BTN_OPEN_REPO}</button>
+    <button onclick='cleanMavenInvalid()' class='pagination-btn' style='padding: 4px 8px; font-size: 0.8rem;'>{MAVEN_BTN_CLEAN_INVALID}</button>
+    <button onclick='showMavenFailedModal()' id='maven-failed-btn' class='pagination-btn' style='padding: 4px 8px; font-size: 0.8rem; display: none; border-color: #e67e22; color: #e67e22;' title='{MAVEN_FAILED_HINT}'>⚠ {MAVEN_BTN_FAILED} (<span id='maven-failed-count'>0</span>)</button>
+  </div>
+</div>
+
+<h2 style='margin-top: 0; margin-bottom: 8px; font-size: 1.1rem; display: flex; align-items: center; gap: 6px;'>🪶 {MAVEN_PAGE_TITLE}</h2>
+<div class='gradle-deps-container' style='border: 1px solid var(--border-color); border-radius: 6px; background: var(--container-bg); position: relative; margin-bottom: 10px;'>
+  <table id='maven-pkgs-table' class='file-table' style='width: 100%; border-collapse: collapse; table-layout: fixed;'>
+    <thead style='background: var(--container-bg); box-shadow: 0 1px 0 var(--border-color);'>
+      <tr style='background: var(--bg-color); border-bottom: 1px solid var(--border-color); text-align: left;'>
+        <th style='padding: 8px 10px; width: 36%;'>{MAVEN_TH_GROUPID}</th>
+        <th style='padding: 8px 10px; width: 24%;'>{MAVEN_TH_ARTIFACTID}</th>
+        <th style='padding: 8px 10px; width: 14%;'>{MAVEN_TH_VERSION}</th>
+        <th style='padding: 8px 10px; width: 7%; text-align: center;'>{MAVEN_TH_PACKAGING}</th>
+        <th style='padding: 8px 10px; width: 12%; text-align: right;'>{MAVEN_TH_SIZE}</th>
+      </tr>
+    </thead>
+    <tbody id='maven-pkgs-tbody'>
+      <tr>
+        <td colspan='5' style='padding: 20px; text-align: center; color: var(--text-muted);'>🔄 {MAVEN_LOADING}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div id='maven-pagination' class='pagination-container' style='margin-top: 10px; display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; padding: 6px 12px; background: var(--container-bg); border: 1px solid var(--border-color); border-radius: 6px;'>
+  <div style='color: var(--text-muted);' id='maven-pagination-info'>-</div>
+  <div style='display: flex; align-items: center; gap: 8px;'>
+    <span style='color: var(--text-muted);'>{PAGE_SIZE_LABEL}</span>
+    <select id='maven-page-size' class='pagination-select' onchange='changeMavenPageSize()'>
+      <option value='20'>20</option>
+      <option value='50' selected>50</option>
+      <option value='100'>100</option>
+    </select>
+  </div>
+  <div style='display: flex; gap: 6px;'>
+    <button onclick='mavenGoToPage("first")' class='pagination-btn' id='maven-btn-first'>{PAGE_FIRST}</button>
+    <button onclick='mavenGoToPage("prev")' class='pagination-btn' id='maven-btn-prev'>{PAGE_PREV}</button>
+    <button onclick='mavenGoToPage("next")' class='pagination-btn' id='maven-btn-next'>{PAGE_NEXT}</button>
+    <button onclick='mavenGoToPage("last")' class='pagination-btn' id='maven-btn-last'>{PAGE_LAST}</button>
+  </div>
+</div>
+</div> <!-- explorer-scroll-area -->
+</div> <!-- explorer-main -->
+
+<div class='explorer-preview' id='preview-pane' style='width: 340px; flex-shrink: 0; background: var(--container-bg); border-left: 1px solid var(--border-color); display: flex; flex-direction: column; overflow: hidden; padding: 0 !important;'>
+  <div class='sidebar-expand-btn' onclick='toggleSidebar("right")' style='display: none;'>{PREVIEW_BTN_EXPAND}</div>
+  <div class='sidebar-title' style='display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 12px 15px; border-bottom: 1px solid var(--border-color); box-sizing: border-box;'>
+    <span>{MAVEN_DETAIL_TITLE}</span>
+    <span class='sidebar-toggle-btn' onclick='toggleSidebar("right"); event.stopPropagation();' style='cursor: pointer; font-size: 0.8rem; color: var(--text-muted); padding: 2px 6px; border-radius: 4px;' title='{PREVIEW_BTN_COLLAPSE}'>▶</span>
+  </div>
+  <div id='maven-preview-body' style='flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; min-width: 0; width: 100%; box-sizing: border-box;'>
+    <div style='text-align: center; color: var(--text-muted); margin-top: 40px; padding: 10px;'>
+      <span style='font-size: 2.5rem; display: block; margin-bottom: 12px;'>🪶</span>
+      {MAVEN_DETAIL_EMPTY}
+    </div>
+  </div>
+</div>
+
+<!-- Modal for Maven Environment & Config Details -->
+<div id='maven-config-modal' class='modal'>
+  <div class='modal-content' style='width: 720px; max-width: 95%;'>
+    <div class='modal-header'>
+      <span class='modal-title'>{MAVEN_MODAL_CONFIG_TITLE}</span>
+      <button class='modal-close' onclick='closeMavenConfigModal()'>&times;</button>
+    </div>
+    <div class='modal-body' id='maven-config-modal-body' style='max-height: 520px; overflow-y: auto; padding: 16px;'>
+      <div style='text-align: center; padding: 30px; color: var(--text-muted);'>🔄 Loading...</div>
+    </div>
+    <div class='modal-footer'>
+      <button class='modal-btn' onclick='closeMavenConfigModal()'>{MODAL_BTN_OK}</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal for Maven Versions List -->
+<div id='maven-versions-modal' class='modal' style='z-index: 2100;'>
+  <div class='modal-content' style='width: 560px; max-width: 90%;'>
+    <div class='modal-header'>
+      <span class='modal-title' id='maven-versions-modal-title'></span>
+      <button class='modal-close' onclick='closeMavenVersionsModal()'>&times;</button>
+    </div>
+    <div class='modal-body custom-scrollbar' id='maven-versions-modal-body' style='max-height: 380px; overflow-y: auto; padding: 15px;'></div>
+    <div class='modal-footer'>
+      <button class='modal-btn' onclick='closeMavenVersionsModal()'>{MODAL_BTN_OK}</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal for Maven Failed Artifacts -->
+<div id='maven-failed-modal' class='modal' style='z-index: 2100;'>
+  <div class='modal-content' style='width: 760px; max-width: 92%;'>
+    <div class='modal-header'>
+      <span class='modal-title'>{MAVEN_FAILED_MODAL_TITLE}</span>
+      <button class='modal-close' onclick='closeMavenFailedModal()'>&times;</button>
+    </div>
+    <div class='modal-body custom-scrollbar' id='maven-failed-modal-body' style='max-height: 420px; overflow-y: auto; padding: 15px;'></div>
+    <div id='maven-failed-statbar' style='display: none; padding: 7px 15px; font-size: 0.78rem; color: var(--text-muted); border-top: 1px solid var(--border-color); background: var(--container-bg);'>
+      📊 <span id='maven-failed-stat-total'></span> · ☑ <span id='maven-failed-stat-sel'></span>
+    </div>
+    <div class='modal-footer' style='display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;'>
+      <label style='font-size: 0.82rem; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; gap: 5px;'>
+        <input type='checkbox' id='maven-failed-select-all' onchange='toggleMavenFailedSelectAll(this.checked)'> {MAVEN_SELECT_ALL}
+      </label>
+      <div style='display: flex; gap: 8px;'>
+        <button class='modal-btn' onclick='retrySelectedMavenFailed()' style='border-color: #2980b9;'>🔄 {MAVEN_BATCH_RETRY}</button>
+        <button class='modal-btn' onclick='deleteSelectedMavenFailed()' style='background: transparent; color: #e74c3c; border-color: #e74c3c;'>🗑 {MAVEN_BATCH_DELETE}</button>
+        <button class='modal-btn' onclick='closeMavenFailedModal()'>{MODAL_BTN_OK}</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal for Cleaning Invalid Artifacts (preview & selective clean) -->
+<div id='maven-clean-modal' class='modal' style='z-index: 2100;'>
+  <div class='modal-content' style='width: 760px; max-width: 92%;'>
+    <div class='modal-header'>
+      <span class='modal-title' id='maven-clean-modal-title'>🧹 Invalid Caches</span>
+      <button class='modal-close' onclick='closeMavenCleanModal()'>&times;</button>
+    </div>
+    <div id='maven-clean-modal-hint' style='padding: 10px 15px 0; font-size: 0.78rem; color: var(--text-muted); line-height: 1.6;'></div>
+    <div class='modal-body custom-scrollbar' id='maven-clean-modal-body' style='max-height: 420px; overflow-y: auto; padding: 15px;'></div>
+    <div class='modal-footer' style='display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;'>
+      <label style='font-size: 0.82rem; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; gap: 5px;'>
+        <input type='checkbox' id='maven-clean-select-all' onchange='toggleMavenCleanSelectAll(this.checked)'> {MAVEN_SELECT_ALL}
+      </label>
+      <div style='display: flex; gap: 8px;'>
+        <button class='modal-btn' onclick='execMavenCleanSelected()'>{MAVEN_BTN_CLEAN_INVALID}</button>
+        <button class='modal-btn modal-btn-secondary' onclick='closeMavenCleanModal()'>{MODAL_BTN_OK}</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal for Maven Directory File List -->
+<div id='maven-itemfiles-modal' class='modal' style='z-index: 2200;'>
+  <div class='modal-content' style='width: 560px; max-width: 90%;'>
+    <div class='modal-header'>
+      <span class='modal-title' id='maven-itemfiles-title' style='font-size: 0.85rem; word-break: break-all;'>{MAVEN_ITEM_FILES_TITLE}</span>
+      <button class='modal-close' onclick='closeMavenItemFilesModal()'>&times;</button>
+    </div>
+    <div class='modal-body custom-scrollbar' id='maven-itemfiles-body' style='max-height: 420px; overflow-y: auto; padding: 15px;'></div>
+    <div class='modal-footer'>
+      <button class='modal-btn' onclick='closeMavenItemFilesModal()'>{MODAL_BTN_OK}</button>
+    </div>
+  </div>
+</div>

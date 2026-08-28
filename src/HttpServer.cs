@@ -217,6 +217,30 @@ namespace LocalDiskServer
                     return;
                 }
 
+                if (rawPath.Equals("gradle", StringComparison.OrdinalIgnoreCase))
+                {
+                    GradleExplorer.ServeGradleDashboard(response);
+                    return;
+                }
+
+                if (rawPath.Equals("npm", StringComparison.OrdinalIgnoreCase))
+                {
+                    NpmExplorer.ServeNpmDashboard(response);
+                    return;
+                }
+
+                if (rawPath.Equals("pnpm", StringComparison.OrdinalIgnoreCase))
+                {
+                    PnpmExplorer.ServePnpmDashboard(response);
+                    return;
+                }
+
+                if (rawPath.Equals("maven", StringComparison.OrdinalIgnoreCase))
+                {
+                    MavenExplorer.ServeMavenDashboard(response);
+                    return;
+                }
+
                 if (rawPath.StartsWith("api/", StringComparison.OrdinalIgnoreCase))
                 {
                     HandleApiRequest(rawPath, request, response);
@@ -291,6 +315,9 @@ namespace LocalDiskServer
             {
                 if (ServerApplicationContext.HandleSettingsApi(rawPath, request, response)) return;
                 if (Logger.HandleApi(rawPath, request, response)) return;
+                if (NpmExplorer.HandleApi(rawPath, request, response)) return;
+                if (PnpmExplorer.HandleApi(rawPath, request, response)) return;
+                if (MavenExplorer.HandleApi(rawPath, request, response)) return;
                 if (GradleExplorer.HandleApi(rawPath, request, response)) return;
                 if (FileExplorer.HandleApi(rawPath, request, response)) return;
 
@@ -641,7 +668,8 @@ namespace LocalDiskServer
             sb.AppendFormat("    <button id='protocol-switch-btn' onclick='toggleProtocol(event)' class='btn-back' style='height: 32px; padding: 0 10px; margin-left: 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px; flex-shrink: 0;' title='{0}'></button>", I18nManager.T("lobby_proto_toggle_title"));
             sb.Append("  </div>");
             sb.Append("  <div class='toolbar-right' style='display: flex; align-items: center; gap: 8px;'>");
-            sb.AppendFormat("    <button class='btn-toolbar-settings' onclick='showSettingsModal()' style='height: 32px; padding: 0 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px;' title='{0}'><span>⚙️</span> {0}</button>", I18nManager.T("lobby_settings_btn"));
+            sb.AppendFormat("    <button class='btn-toolbar-settings' onclick='showSettingsModal()' style='height: 32px; padding: 0 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px;' title='{0}'><span>⚙️</span> <span>{0}</span></button>", I18nManager.T("lobby_settings_btn"));
+            sb.AppendFormat("    <button class='btn-toolbar-logs' onclick='showLogs()' style='height: 32px; padding: 0 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px;' title='{0}'><span>📝</span> <span>{0}</span></button>", I18nManager.T("lobby_logs_btn"));
             sb.Append("    <select id='view-select' onchange='setViewMode(this.value)' style='height: 32px; background: var(--container-bg); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 8px; cursor: pointer; outline: none; font-size: 0.85rem;'>");
             sb.AppendFormat("      <option value='details'>{0}</option>", I18nManager.T("lobby_view_details"));
             sb.AppendFormat("      <option value='large'>{0}</option>", I18nManager.T("lobby_view_large"));
@@ -728,49 +756,49 @@ namespace LocalDiskServer
                     I18nManager.T("lobby_gradle_title"), I18nManager.T("tag_ready"), I18nManager.T("lobby_gradle_desc")
                 );
 
-                // 2. Maven (In Plan)
+                // 2. Maven (Ready)
                 sb.AppendFormat(
-                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;' title='{1} ({2}) - {3}'>" +
-                    "  <div class='icon-wrapper'>{0}</div>" +
+                    "<a href='/maven' class='card drive-card dev-card' title='{0} ({1}) - {2}'>" +
+                    "  <div class='icon-wrapper'>{3}</div>" +
                     "  <div class='card-info'>" +
                     "    <div class='card-title-row'>" +
-                    "      <span class='title title-text' title='{1}'>{1}</span>" +
-                    "      <span class='dev-badge plan'>{2}</span>" +
+                    "      <span class='title title-text' title='{0}'>{0}</span>" +
+                    "      <span class='dev-badge ready'>{1}</span>" +
                     "    </div>" +
-                    "    <div class='desc' title='{3}'>{3}</div>" +
+                    "    <div class='desc' title='{2}'>{2}</div>" +
                     "  </div>" +
-                    "</div>",
-                    GetMavenSvg(), I18nManager.T("lobby_maven_title"), I18nManager.T("tag_coming_soon"), I18nManager.T("lobby_maven_desc")
+                    "</a>",
+                    I18nManager.T("lobby_maven_title"), I18nManager.T("tag_ready"), I18nManager.T("lobby_maven_desc"), GetMavenSvg()
                 );
 
-                // 3. NPM (In Plan)
+                // 3. NPM (Ready)
                 sb.AppendFormat(
-                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;' title='{1} ({2}) - {3}'>" +
+                    "<a href='/npm' class='card drive-card' title='{1} ({2}) - {3}'>" +
                     "  <div class='icon-wrapper'>{0}</div>" +
                     "  <div class='card-info'>" +
                     "    <div class='card-title-row'>" +
                     "      <span class='title title-text' title='{1}'>{1}</span>" +
-                    "      <span class='dev-badge plan'>{2}</span>" +
+                    "      <span class='dev-badge ready'>{2}</span>" +
                     "    </div>" +
                     "    <div class='desc' title='{3}'>{3}</div>" +
                     "  </div>" +
-                    "</div>",
-                    GetNpmSvg(), I18nManager.T("lobby_npm_title"), I18nManager.T("tag_coming_soon"), I18nManager.T("lobby_npm_desc")
+                    "</a>",
+                    GetNpmSvg(), I18nManager.T("lobby_npm_title"), I18nManager.T("tag_ready"), I18nManager.T("lobby_npm_desc")
                 );
 
-                // 4. PNPM (In Plan)
+                // 4. PNPM (Ready)
                 sb.AppendFormat(
-                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;' title='{1} ({2}) - {3}'>" +
+                    "<a href='/pnpm' class='card drive-card' title='{1} ({2}) - {3}'>" +
                     "  <div class='icon-wrapper'>{0}</div>" +
                     "  <div class='card-info'>" +
                     "    <div class='card-title-row'>" +
                     "      <span class='title title-text' title='{1}'>{1}</span>" +
-                    "      <span class='dev-badge plan'>{2}</span>" +
+                    "      <span class='dev-badge ready'>{2}</span>" +
                     "    </div>" +
                     "    <div class='desc' title='{3}'>{3}</div>" +
                     "  </div>" +
-                    "</div>",
-                    GetPnpmSvg(), I18nManager.T("lobby_pnpm_title"), I18nManager.T("tag_coming_soon"), I18nManager.T("lobby_pnpm_desc")
+                    "</a>",
+                    GetPnpmSvg(), I18nManager.T("lobby_pnpm_title"), I18nManager.T("tag_ready"), I18nManager.T("lobby_pnpm_desc")
                 );
 
                 // 5. Android (In Plan)
@@ -824,12 +852,8 @@ namespace LocalDiskServer
             sb.AppendFormat(
                 "<div class='lobby-footer'>" +
                 "  <span class='lobby-footer-title'>⚡ LocalDiskServer <span class='lobby-footer-ver'>v{0}</span></span>" +
-                "  <span class='lobby-footer-sep'>·</span>" +
-                "  <button type='button' class='lobby-footer-link' onclick='showSettingsModal()'>⚙️ {1}</button>" +
-                "  <span class='lobby-footer-sep'>·</span>" +
-                "  <button type='button' class='lobby-footer-link' onclick='showLogs()'>📝 {2}</button>" +
                 "</div>",
-                ServerApplicationContext.APP_VERSION, I18nManager.T("lobby_settings_btn"), I18nManager.T("menu_view_logs")
+                ServerApplicationContext.APP_VERSION
             );
 
             sb.Append(HttpServer.GetHtmlFooter());

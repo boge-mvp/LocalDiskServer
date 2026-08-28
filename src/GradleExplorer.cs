@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net;
 using System.Text;
+using System.Diagnostics;
 using System.Collections.Generic;
 using System.Windows.Forms;
 using System.Xml;
@@ -286,7 +287,7 @@ namespace LocalDiskServer
                     
                     if (i > 0) wrappersJson.Append(",");
                     wrappersJson.AppendFormat("{{\"version\":\"{0}\",\"fullName\":\"{1}\",\"size\":\"{2}\",\"files\":{3},\"path\":\"{4}\"}}",
-                        HttpServer.EscapeJson(friendlyVersion), HttpServer.EscapeJson(dName), HttpServer.FormatFileSize(size), fileCount, HttpServer.EscapeJson(dirs[i].Replace("\\", "\\\\")));
+                        HttpServer.EscapeJson(friendlyVersion), HttpServer.EscapeJson(dName), HttpServer.FormatFileSize(size), fileCount, HttpServer.EscapeJson(dirs[i]));
                 }
             }
             wrappersJson.Append("]");
@@ -403,6 +404,141 @@ namespace LocalDiskServer
             return null;
         }
 
+        public static void DetectJavaRuntime(out string javaHome, out string javaVersion, out string javaPath)
+        {
+            javaHome = Environment.GetEnvironmentVariable("JAVA_HOME") ?? "";
+            javaVersion = "";
+            javaPath = "";
+
+            if (!string.IsNullOrEmpty(javaHome) && Directory.Exists(javaHome))
+            {
+                string exe = Path.Combine(javaHome, "bin", "java.exe");
+                if (File.Exists(exe)) javaPath = exe;
+            }
+
+            if (string.IsNullOrEmpty(javaPath))
+            {
+                try
+                {
+                    string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+                    string[] paths = pathEnv.Split(Path.PathSeparator);
+                    foreach (string p in paths)
+                    {
+                        if (string.IsNullOrEmpty(p)) continue;
+                        string candidate = Path.Combine(p.Trim('\"', ' '), "java.exe");
+                        if (File.Exists(candidate))
+                        {
+                            javaPath = candidate;
+                            if (string.IsNullOrEmpty(javaHome))
+                            {
+                                string binDir = Path.GetDirectoryName(candidate);
+                                if (!string.IsNullOrEmpty(binDir))
+                                {
+                                    javaHome = Path.GetDirectoryName(binDir) ?? "";
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            if (!string.IsNullOrEmpty(javaPath) && File.Exists(javaPath))
+            {
+                try
+                {
+                    ProcessStartInfo psi = new ProcessStartInfo
+                    {
+                        FileName = javaPath,
+                        Arguments = "-version",
+                        RedirectStandardError = true,
+                        RedirectStandardOutput = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    using (var p = Process.Start(psi))
+                    {
+                        string err = p.StandardError.ReadToEnd();
+                        string outStr = p.StandardOutput.ReadToEnd();
+                        p.WaitForExit(3000);
+                        string output = !string.IsNullOrEmpty(err) ? err : outStr;
+                        if (!string.IsNullOrEmpty(output))
+                        {
+                            string[] lines = output.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                            if (lines.Length > 0)
+                            {
+                                javaVersion = lines[0].Trim();
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+
+        public static void DetectGradleCli(out string gradleCliVersion, out string gradleCliPath)
+        {
+            gradleCliVersion = "";
+            gradleCliPath = "";
+
+            try
+            {
+                string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+                string[] paths = pathEnv.Split(Path.PathSeparator);
+                foreach (string p in paths)
+                {
+                    if (string.IsNullOrEmpty(p)) continue;
+                    string candidateCmd = Path.Combine(p.Trim('\"', ' '), "gradle.bat");
+                    string candidateExe = Path.Combine(p.Trim('\"', ' '), "gradle.exe");
+                    if (File.Exists(candidateCmd))
+                    {
+                        gradleCliPath = candidateCmd;
+                        break;
+                    }
+                    else if (File.Exists(candidateExe))
+                    {
+                        gradleCliPath = candidateExe;
+                        break;
+                    }
+                }
+            }
+            catch { }
+
+            if (!string.IsNullOrEmpty(gradleCliPath) && File.Exists(gradleCliPath))
+            {
+                try
+                {
+                    ProcessStartInfo psi = new ProcessStartInfo
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = "/c \"" + gradleCliPath + "\" -v",
+                        RedirectStandardOutput = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    using (var p = Process.Start(psi))
+                    {
+                        string output = p.StandardOutput.ReadToEnd();
+                        p.WaitForExit(5000);
+                        if (!string.IsNullOrEmpty(output))
+                        {
+                            string[] lines = output.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                            foreach (string line in lines)
+                            {
+                                if (line.StartsWith("Gradle ") || line.Contains("Gradle"))
+                                {
+                                    gradleCliVersion = line.Trim();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+
         public static void ServeGradleDashboard(HttpListenerResponse response)
         {
             if (!ServerApplicationContext.enable_dev_ecosystem)
@@ -413,115 +549,19 @@ namespace LocalDiskServer
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.Append(HttpServer.GetHtmlHeader(I18nManager.T("gradle_page_title"), "", "layout-explorer"));
+            sb.Append(HttpServer.GetHtmlHeader(I18nManager.T("gradle_page_title"), "/gradle", "layout-explorer"));
             sb.Append("<script>const currentView = 'gradle';</script>");
-
-            var favList = FileExplorer.GetFavorites();
-
-            // Left Sidebar Tree Pane
-            sb.Append("<div class='explorer-sidebar' id='sidebar-pane'>");
-            sb.AppendFormat("  <div class='sidebar-expand-btn' onclick='toggleSidebar(\"left\")' style='display: none;'>{0}</div>", I18nManager.T("nav_btn_expand"));
-            sb.Append("  <div class='sidebar-title' style='display: flex; justify-content: space-between; align-items: center; width: 100%;'>");
-            sb.AppendFormat("    <span>📂 {0}</span>", I18nManager.T("nav_title"));
-            sb.AppendFormat("    <span class='sidebar-toggle-btn' onclick='toggleSidebar(\"left\"); event.stopPropagation();' style='cursor: pointer; font-size: 0.8rem; color: var(--text-muted); padding: 2px 6px; border-radius: 4px;' title='{0}'>◀</span>", I18nManager.T("nav_btn_collapse"));
-            sb.Append("  </div>");
-            sb.Append("  <div class='tree-container'>");
-            
-            // 1. Home Node
-            sb.Append("    <div class='tree-node root-node'>");
-            sb.AppendFormat("      <a href='/' class='tree-link'>🏠 {0}</a>", I18nManager.T("nav_home"));
-            sb.Append("    </div>");
-
-            // 2. Quick Access Node
-            sb.Append("    <div class='tree-node branch-node' id='node-quick-access'>");
-            sb.Append("      <div class='tree-row' onclick='toggleTreeNode(\"quick-access\")'>");
-            sb.Append("        <span class='tree-arrow'>▼</span>");
-            sb.Append("        <span class='tree-folder-icon'>🚀</span>");
-            sb.AppendFormat("        <span class='tree-text'>{0}</span>", I18nManager.T("quick_access_title"));
-            sb.Append("      </div>");
-            sb.Append("      <div class='tree-children' id='children-quick-access'>");
-
-            var quickItems = FileExplorer.GetStandardQuickAccessItems();
-            foreach (var q in quickItems)
-            {
-                sb.AppendFormat("        <a href='{0}' class='tree-link' title='{1}'>{2} {3}</a>",
-                    q.WebPath, q.PhysicalPath.Replace("'", "\\'"), q.Emoji, q.Title);
-            }
-
-            sb.Append("      </div>");
-            sb.Append("    </div>");
-
-            // 3. Favorites Node
-            sb.Append("    <div class='tree-node branch-node' id='node-favorites'>");
-            sb.Append("      <div class='tree-row' onclick='toggleTreeNode(\"favorites\")'>");
-            sb.Append("        <span class='tree-arrow'>▼</span>");
-            sb.Append("        <span class='tree-folder-icon'>⭐</span>");
-            sb.AppendFormat("        <span class='tree-text'>{0}</span>", I18nManager.T("nav_favorites"));
-            sb.Append("      </div>");
-            sb.Append("      <div class='tree-children' id='children-favorites'>");
-            foreach (string fav in favList)
-            {
-                if (Directory.Exists(fav))
-                {
-                    string fName = Path.GetFileName(fav);
-                    if (string.IsNullOrEmpty(fName)) fName = fav;
-                    string webLink = HttpServer.PhysicalToWebPath(fav);
-                    sb.AppendFormat("        <a href='{0}' class='tree-link' title='{1}'>📁 {2}</a>", webLink, fav.Replace("'", "\\'"), fName);
-                }
-            }
-            sb.Append("      </div>");
-            sb.Append("    </div>");
-
-            // 4. Drives Node
-            sb.Append("    <div class='tree-node branch-node' id='node-drives'>");
-            sb.Append("      <div class='tree-row' onclick='toggleTreeNode(\"drives\")'>");
-            sb.Append("        <span class='tree-arrow'>▼</span>");
-            sb.Append("        <span class='tree-folder-icon'>💾</span>");
-            sb.AppendFormat("        <span class='tree-text'>{0}</span>", I18nManager.T("nav_drives"));
-            sb.Append("      </div>");
-            sb.Append("      <div class='tree-children' id='children-drives'>");
-            var drives = DriveInfo.GetDrives();
-            foreach (var d in drives)
-            {
-                if (d.IsReady)
-                {
-                    string dPath = d.Name;
-                    string dName = d.Name.TrimEnd('\\');
-                    string dWeb = "/" + dName.ToLower().Replace(":", "") + "/";
-                    sb.AppendFormat("        <div class='tree-node'>");
-                    sb.AppendFormat("          <div class='tree-row' data-path='{0}'>", dPath.Replace("\\", "\\\\").Replace("'", "\\'"));
-                    sb.AppendFormat("            <span class='tree-arrow collapsed' onclick='expandTreeNode(event, \"{0}\")'>▶</span>", dPath.Replace("\\", "\\\\").Replace("'", "\\'"));
-                    sb.AppendFormat("            <a href='{0}' class='tree-link-inline' style='color:inherit;'>💽 {1}</a>", dWeb, dName);
-                    sb.AppendFormat("          </div>");
-                    sb.AppendFormat("          <div class='tree-children' id='dir-{0}' style='display:none;'></div>", dPath.Replace("\\", "_").Replace(":", "_"));
-                    sb.AppendFormat("        </div>");
-                }
-            }
-            sb.Append("      </div>");
-            sb.Append("    </div>");
-
-            // 5. Developer Ecosystem Node (Gradle active!)
-            sb.Append("    <div class='tree-node root-node' style='margin-top: 10px; border-top: 1px solid var(--border-color); padding-top: 8px;'>");
-            sb.Append("      <div class='tree-row'>");
-            sb.Append("        <span class='tree-arrow' onclick='toggleDevEcosystem(event)'>▼</span>");
-            sb.AppendFormat("        <span class='tree-label' style='font-weight: bold; cursor: pointer;' onclick='toggleDevEcosystem(event)'>📦 {0}</span>", I18nManager.T("nav_dev_ecosystem"));
-            sb.Append("      </div>");
-            sb.Append("      <div class='tree-children' id='children-dev-ecosystem'>");
-            sb.AppendFormat("        <div class='tree-node'><div class='tree-row active'><a href='/?view=gradle' class='tree-link-inline active-node' style='color:inherit; font-weight: bold;'>☕ {0}</a></div></div>", I18nManager.T("nav_gradle"));
-            sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>🪶 {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_maven"), I18nManager.T("tag_coming_soon"));
-            sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>📦 {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_npm"), I18nManager.T("tag_coming_soon"));
-            sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>⚡ {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_pnpm"), I18nManager.T("tag_coming_soon"));
-            sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>🤖 {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_android"), I18nManager.T("tag_coming_soon"));
-            sb.Append("      </div>");
-            sb.Append("    </div>");
-
-            sb.Append("  </div>");
-            sb.Append("</div>");
-
+            string currentLocale = I18nManager.CurrentLanguage;
+            sb.Append(FileExplorer.RenderSidebar("/gradle", currentLocale));
             // Load and append middle & right column layout from gradle.html
             string gradleHtml = HttpServer.LoadResource("gradle.html");
             gradleHtml = gradleHtml.Replace("{GRADLE_BREADCRUMB_HOME}", I18nManager.T("gradle_breadcrumb_home"));
             gradleHtml = gradleHtml.Replace("{GRADLE_PAGE_TITLE}", I18nManager.T("gradle_page_title"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_BTN_CONFIG_DETAILS}", I18nManager.T("gradle_btn_config_details"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_MODAL_CONFIG_TITLE}", I18nManager.T("gradle_modal_config_title"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_CFG_SEC_RUNTIME}", I18nManager.T("gradle_cfg_sec_runtime"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_CFG_SEC_PATHS}", I18nManager.T("gradle_cfg_sec_paths"));
+            gradleHtml = gradleHtml.Replace("{GRADLE_CFG_SEC_PROPS}", I18nManager.T("gradle_cfg_sec_props"));
             gradleHtml = gradleHtml.Replace("{LOBBY_PROTO_TOGGLE_TITLE}", I18nManager.T("lobby_proto_toggle_title"));
             gradleHtml = gradleHtml.Replace("{GRADLE_SEARCH_PLACEHOLDER}", I18nManager.T("gradle_search_placeholder"));
             gradleHtml = gradleHtml.Replace("{GRADLE_BTN_RESCAN}", I18nManager.T("gradle_btn_rescan"));
@@ -668,11 +708,87 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
                         totalSize = GradleExplorer.cachedTotalSize;
                     }
 
-                    string responseJson = string.Format(
-                        "{{\"success\":true,\"gradleHome\":\"{0}\",\"isScanning\":{1},\"wrappers\":{2},\"dependencyCount\":{3},\"kmpCount\":{4},\"totalSize\":\"{5}\"}}",
-                        HttpServer.EscapeJson(gHome), scanning ? "true" : "false", wrappers, depCount, kmpCount, HttpServer.FormatFileSize(totalSize)
-                    );
-                    HttpServer.ServeJson(response, 200, responseJson);
+                    string javaHome, javaVersion, javaPath;
+                    DetectJavaRuntime(out javaHome, out javaVersion, out javaPath);
+
+                    string gradleCliVersion, gradleCliPath;
+                    DetectGradleCli(out gradleCliVersion, out gradleCliPath);
+
+                    string cachesDir = Path.Combine(gHome, "caches", "modules-2", "files-2.1");
+                    string wrapperDistsDir = Path.Combine(gHome, "wrapper", "dists");
+                    string daemonDir = Path.Combine(gHome, "daemon");
+                    string jdksDir = Path.Combine(gHome, "jdks");
+                    string initDir = Path.Combine(gHome, "init.d");
+
+                    string gradlePropertiesPath = Path.Combine(gHome, "gradle.properties");
+                    if (!File.Exists(gradlePropertiesPath))
+                    {
+                        string userHomeProps = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gradle", "gradle.properties");
+                        if (File.Exists(userHomeProps)) gradlePropertiesPath = userHomeProps;
+                    }
+
+                    string gradlePropertiesContent = "";
+                    Dictionary<string, string> propsDict = new Dictionary<string, string>();
+                    if (File.Exists(gradlePropertiesPath))
+                    {
+                        try
+                        {
+                            gradlePropertiesContent = File.ReadAllText(gradlePropertiesPath, Encoding.UTF8);
+                            string[] pLines = File.ReadAllLines(gradlePropertiesPath, Encoding.UTF8);
+                            foreach (string pl in pLines)
+                            {
+                                string trim = pl.Trim();
+                                if (string.IsNullOrEmpty(trim) || trim.StartsWith("#") || trim.StartsWith("!")) continue;
+                                int eqIdx = trim.IndexOf('=');
+                                if (eqIdx > 0)
+                                {
+                                    string pk = trim.Substring(0, eqIdx).Trim();
+                                    string pv = trim.Substring(eqIdx + 1).Trim();
+                                    if (!string.IsNullOrEmpty(pk) && !propsDict.ContainsKey(pk))
+                                    {
+                                        propsDict[pk] = pv;
+                                    }
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+
+                    StringBuilder sb = new StringBuilder();
+                    sb.Append("{");
+                    sb.Append("\"success\":true,");
+                    sb.AppendFormat("\"gradleHome\":\"{0}\",", HttpServer.EscapeJson(gHome));
+                    sb.AppendFormat("\"isScanning\":{0},", scanning ? "true" : "false");
+                    sb.AppendFormat("\"wrappers\":{0},", wrappers);
+                    sb.AppendFormat("\"dependencyCount\":{0},", depCount);
+                    sb.AppendFormat("\"kmpCount\":{0},", kmpCount);
+                    sb.AppendFormat("\"totalSize\":\"{0}\",", HttpServer.FormatFileSize(totalSize));
+                    sb.AppendFormat("\"javaHome\":\"{0}\",", HttpServer.EscapeJson(javaHome));
+                    sb.AppendFormat("\"javaVersion\":\"{0}\",", HttpServer.EscapeJson(javaVersion));
+                    sb.AppendFormat("\"javaPath\":\"{0}\",", HttpServer.EscapeJson(javaPath));
+                    sb.AppendFormat("\"gradleCliVersion\":\"{0}\",", HttpServer.EscapeJson(gradleCliVersion));
+                    sb.AppendFormat("\"gradleCliPath\":\"{0}\",", HttpServer.EscapeJson(gradleCliPath));
+                    sb.AppendFormat("\"cachesDir\":\"{0}\",", HttpServer.EscapeJson(cachesDir));
+                    sb.AppendFormat("\"wrapperDistsDir\":\"{0}\",", HttpServer.EscapeJson(wrapperDistsDir));
+                    sb.AppendFormat("\"daemonDir\":\"{0}\",", HttpServer.EscapeJson(daemonDir));
+                    sb.AppendFormat("\"jdksDir\":\"{0}\",", HttpServer.EscapeJson(jdksDir));
+                    sb.AppendFormat("\"initDir\":\"{0}\",", HttpServer.EscapeJson(initDir));
+                    sb.AppendFormat("\"gradlePropertiesPath\":\"{0}\",", File.Exists(gradlePropertiesPath) ? HttpServer.EscapeJson(gradlePropertiesPath) : "");
+                    sb.AppendFormat("\"gradlePropertiesContent\":\"{0}\",", HttpServer.EscapeJson(gradlePropertiesContent));
+                    
+                    sb.Append("\"gradleProperties\":{");
+                    int pCount = 0;
+                    foreach (var kvp in propsDict)
+                    {
+                        if (pCount > 0) sb.Append(",");
+                        sb.AppendFormat("\"{0}\":\"{1}\"", HttpServer.EscapeJson(kvp.Key), HttpServer.EscapeJson(kvp.Value));
+                        pCount++;
+                    }
+                    sb.Append("}");
+
+                    sb.Append("}");
+
+                    HttpServer.ServeJson(response, 200, sb.ToString());
                 }
                 else if (rawPath.Equals("api/gradle/search", StringComparison.OrdinalIgnoreCase))
                 {
@@ -705,7 +821,7 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
                         var dep = matches[i];
                         if (i > 0) sb.Append(",");
                         sb.AppendFormat("{{\"group\":\"{0}\",\"artifact\":\"{1}\",\"version\":\"{2}\",\"isKmp\":{3},\"size\":\"{4}\",\"path\":\"{5}\"}}",
-                            HttpServer.EscapeJson(dep.Group), HttpServer.EscapeJson(dep.Artifact), HttpServer.EscapeJson(dep.Version), dep.IsKmp ? "true" : "false", dep.FriendlySize, HttpServer.EscapeJson(dep.LocalPath.Replace("\\", "\\\\")));
+                            HttpServer.EscapeJson(dep.Group), HttpServer.EscapeJson(dep.Artifact), HttpServer.EscapeJson(dep.Version), dep.IsKmp ? "true" : "false", dep.FriendlySize, HttpServer.EscapeJson(dep.LocalPath));
                     }
                     sb.Append("]");
                     HttpServer.ServeJson(response, 200, string.Format("{{\"success\":true,\"results\":{0}}}", sb.ToString()));
@@ -1092,6 +1208,69 @@ public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpLi
                     else
                     {
                         HttpServer.ServeJson(response, 404, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_gradle_dep_not_found"))));
+                    }
+                    return true;
+                }
+                else if (rawPath.Equals("api/gradle/open-path", StringComparison.OrdinalIgnoreCase))
+                {
+                    string path = request.QueryString["path"];
+                    if (string.IsNullOrEmpty(path))
+                    {
+                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_missing_path")) + "\"}");
+                        return true;
+                    }
+
+                    if (Directory.Exists(path) || File.Exists(path))
+                    {
+                        try
+                        {
+                            Process.Start("explorer.exe", Directory.Exists(path) ? path : ("/select,\"" + path + "\""));
+                            Logger.Log(I18nManager.T("log_locate_in_explorer", path));
+                            HttpServer.ServeJson(response, 200, "{\"success\":true}");
+                        }
+                        catch (Exception ex)
+                        {
+                            HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(ex.Message) + "\"}");
+                        }
+                    }
+                    else
+                    {
+                        HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_path_not_found")) + "\"}");
+                    }
+                    return true;
+                }
+                else if (rawPath.Equals("api/gradle/terminal", StringComparison.OrdinalIgnoreCase))
+                {
+                    string path = request.QueryString["path"];
+                    if (string.IsNullOrEmpty(path))
+                    {
+                        HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_missing_path")) + "\"}");
+                        return true;
+                    }
+
+                    string targetDir = Directory.Exists(path) ? path : Path.GetDirectoryName(path);
+                    if (!string.IsNullOrEmpty(targetDir) && Directory.Exists(targetDir))
+                    {
+                        try
+                        {
+                            ProcessStartInfo psi = new ProcessStartInfo
+                            {
+                                FileName = "powershell.exe",
+                                WorkingDirectory = targetDir,
+                                UseShellExecute = true
+                            };
+                            Process.Start(psi);
+                            Logger.Log(I18nManager.T("log_open_terminal", "PowerShell", targetDir));
+                            HttpServer.ServeJson(response, 200, "{\"success\":true}");
+                        }
+                        catch (Exception ex)
+                        {
+                            HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(ex.Message) + "\"}");
+                        }
+                    }
+                    else
+                    {
+                        HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_path_not_found")) + "\"}");
                     }
                     return true;
                 }

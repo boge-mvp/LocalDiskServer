@@ -117,11 +117,26 @@
                 <div class='log-container' id='log-container'></div>
             </div>
             <div class='modal-footer'>
-                <button class='modal-btn' style='background: var(--text-muted); margin-right: 10px;' onclick='clearLogs()'>{MODAL_LOGS_BTN_CLEAR}</button>
+                <button class='modal-btn modal-btn-secondary' onclick='clearLogs()'>{MODAL_LOGS_BTN_CLEAR}</button>
                 <button class='modal-btn' onclick='closeLogs()'>{MODAL_BTN_OK}</button>
             </div>
         </div>
     </div>
+    <!-- Universal Confirm Modal -->
+    <div id='app-confirm-modal' class='modal' style='z-index: 2300;'>
+        <div class='modal-content' style='width: 480px; max-width: 90%;'>
+            <div class='modal-header'>
+                <span class='modal-title' id='app-confirm-title'></span>
+                <button class='modal-close' onclick='closeAppConfirm()'>&times;</button>
+            </div>
+            <div class='modal-body' id='app-confirm-body' style='padding: 18px 16px; font-size: 0.85rem; line-height: 1.7; word-break: break-all;'></div>
+            <div class='modal-footer'>
+                <button class='modal-btn modal-btn-secondary' id='app-confirm-cancel-btn' onclick='closeAppConfirm()'>Cancel</button>
+                <button class='modal-btn' id='app-confirm-ok-btn' onclick='executeAppConfirm()'>OK</button>
+            </div>
+        </div>
+    </div>
+
     <script>const availableShells = {SHELLS_JSON};</script>
     <script src='/app.js?v={VERSION_HASH}'></script>
 </body>

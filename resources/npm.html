@@ -1,0 +1,119 @@
+<div class='explorer-main'>
+<div class='toolbar'>
+  <div class='toolbar-left'>
+    <div class='address-bar-wrapper'>
+      <div class='breadcrumbs'>
+        <a href='/'>🏠</a> <span class='separator'>/</span> <span class='breadcrumb-current'>📦 {NPM_BREADCRUMB}</span>
+      </div>
+    </div>
+    <button id='protocol-switch-btn' onclick='toggleProtocol(event)' class='btn-back' style='height: 32px; padding: 0 10px; margin-left: 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px; flex-shrink: 0;' title='{LOBBY_PROTO_TOGGLE_TITLE}'></button>
+  </div>
+  <div class='toolbar-right' style='display: flex; align-items: center; gap: 8px;'>
+    <input type='text' id='npm-search-input' placeholder='{NPM_SEARCH_PLACEHOLDER}' oninput='onNpmSearchChange()' style='width: 280px; height: 32px; box-sizing: border-box; padding: 4px 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); font-size: 0.9rem;'>
+    <button class='btn-back' onclick='triggerNpmScan()' style='height: 32px; padding: 0 10px; margin-left: 0; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem;' id='npm-refresh-btn'>{NPM_BTN_RESCAN}</button>
+  </div>
+</div>
+<div class='explorer-scroll-area'>
+<div style='padding: 10px 14px; background: var(--container-bg); border: 1px solid var(--border-color); border-radius: 6px; margin-bottom: 12px; font-size: 0.85rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;'>
+  <div style='display: flex; align-items: center; gap: 8px; font-weight: bold; color: #cb3837;'><span style='font-size:1.25rem;'>📦</span> NPM</div>
+  <div style='display: flex; align-items: center; gap: 15px; flex-wrap: wrap;'>
+    <div><span style='color: var(--text-muted);'>{NPM_STAT_PKGS}:</span> <strong id='npm-stat-pkgs'>-</strong> (<span id='npm-stat-pkgs-size'>-</span>)</div>
+    <div style='width: 1px; height: 12px; background: var(--border-color);'></div>
+    <div><span style='color: var(--text-muted);'>{NPM_STAT_CACACHE}:</span> <strong id='npm-stat-cacache'>-</strong></div>
+    <div style='width: 1px; height: 12px; background: var(--border-color);'></div>
+    <div><span style='color: var(--text-muted);'>{NPM_STAT_TEMP}:</span> <strong id='npm-stat-temp'>-</strong></div>
+    <div style='width: 1px; height: 12px; background: var(--border-color);'></div>
+    <div><span style='color: var(--text-muted);'>Registry:</span> <strong id='npm-stat-registry' style='font-family: monospace; font-size: 0.8rem; color: var(--accent-hover);'>-</strong></div>
+  </div>
+  <div style='display: flex; align-items: center; gap: 8px;'>
+    <button onclick='showNpmConfigModal()' class='pagination-btn' style='padding: 4px 10px; font-size: 0.82rem; font-weight: 500; border-color: var(--accent-color); color: var(--accent-hover);'>{NPM_BTN_CONFIG_DETAILS}</button>
+    <button onclick='cleanNpmLogs()' class='pagination-btn' style='padding: 4px 8px; font-size: 0.8rem;'>{NPM_BTN_CLEAN_LOGS}</button>
+    <button onclick='cleanNpmNpx()' class='pagination-btn' style='padding: 4px 8px; font-size: 0.8rem;'>{NPM_BTN_CLEAN_NPX}</button>
+    <button onclick='openNpmRoot()' class='pagination-btn' style='padding: 4px 8px; font-size: 0.8rem;'>{NPM_BTN_OPEN_ROOT}</button>
+  </div>
+</div>
+
+<h2 style='margin-top: 0; margin-bottom: 8px; font-size: 1.1rem; display: flex; align-items: center; gap: 6px;'>📦 {NPM_PAGE_TITLE}</h2>
+<div class='gradle-deps-container' style='border: 1px solid var(--border-color); border-radius: 6px; background: var(--container-bg); position: relative; margin-bottom: 10px;'>
+  <table class='file-table' style='width: 100%; border-collapse: collapse; table-layout: fixed;'>
+    <thead style='background: var(--container-bg); box-shadow: 0 1px 0 var(--border-color);'>
+      <tr style='background: var(--bg-color); border-bottom: 1px solid var(--border-color); text-align: left;'>
+        <th style='padding: 8px 10px; width: 42%;'>{NPM_TH_NAME}</th>
+        <th style='padding: 8px 10px; width: 14%;'>{NPM_TH_VERSION}</th>
+        <th style='padding: 8px 10px; width: 14%;'>{NPM_TH_LICENSE}</th>
+        <th style='padding: 8px 10px; width: 18%;'>{NPM_TH_BIN}</th>
+        <th style='padding: 8px 10px; width: 12%; text-align: right;'>{NPM_TH_SIZE}</th>
+      </tr>
+    </thead>
+    <tbody id='npm-pkgs-tbody'>
+      <tr>
+        <td colspan='5' style='padding: 20px; text-align: center; color: var(--text-muted);'>🔄 {NPM_LOADING}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div id='npm-pagination' class='pagination-container' style='margin-top: 10px; display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; padding: 6px 12px; background: var(--container-bg); border: 1px solid var(--border-color); border-radius: 6px;'>
+  <div style='color: var(--text-muted);' id='npm-pagination-info'>-</div>
+  <div style='display: flex; align-items: center; gap: 8px;'>
+    <span style='color: var(--text-muted);'>{PAGE_SIZE_LABEL}</span>
+    <select id='npm-page-size' class='pagination-select' onchange='changeNpmPageSize()'>
+      <option value='15'>15</option>
+      <option value='30'>30</option>
+      <option value='50'>50</option>
+      <option value='100'>100</option>
+    </select>
+  </div>
+  <div style='display: flex; gap: 6px;'>
+    <button onclick='npmGoToPage("first")' class='pagination-btn' id='npm-btn-first'>{PAGE_FIRST}</button>
+    <button onclick='npmGoToPage("prev")' class='pagination-btn' id='npm-btn-prev'>{PAGE_PREV}</button>
+    <button onclick='npmGoToPage("next")' class='pagination-btn' id='npm-btn-next'>{PAGE_NEXT}</button>
+    <button onclick='npmGoToPage("last")' class='pagination-btn' id='npm-btn-last'>{PAGE_LAST}</button>
+  </div>
+</div>
+</div> <!-- explorer-scroll-area -->
+</div> <!-- explorer-main -->
+
+<div class='explorer-preview' id='preview-pane' style='width: 340px; flex-shrink: 0; background: var(--container-bg); border-left: 1px solid var(--border-color); display: flex; flex-direction: column; overflow: hidden; padding: 0 !important;'>
+  <div class='sidebar-expand-btn' onclick='toggleSidebar("right")' style='display: none;'>{PREVIEW_BTN_EXPAND}</div>
+  <div class='sidebar-title' style='display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 12px 15px; border-bottom: 1px solid var(--border-color); box-sizing: border-box;'>
+    <span>{NPM_DETAIL_TITLE}</span>
+    <span class='sidebar-toggle-btn' onclick='toggleSidebar("right"); event.stopPropagation();' style='cursor: pointer; font-size: 0.8rem; color: var(--text-muted); padding: 2px 6px; border-radius: 4px;' title='{PREVIEW_BTN_COLLAPSE}'>▶</span>
+  </div>
+  <div id='npm-preview-body' style='flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; min-width: 0; width: 100%; box-sizing: border-box;'>
+    <div style='text-align: center; color: var(--text-muted); margin-top: 40px; padding: 10px;'>
+      <span style='font-size: 2.5rem; display: block; margin-bottom: 12px;'>📦</span>
+      {NPM_DETAIL_EMPTY}
+    </div>
+  </div>
+</div>
+
+<!-- Modal for NPM Environment & Config Details -->
+<div id='npm-config-modal' class='modal'>
+  <div class='modal-content' style='width: 780px; max-width: 95%;'>
+    <div class='modal-header'>
+      <span class='modal-title'>{NPM_MODAL_CONFIG_TITLE}</span>
+      <button class='modal-close' onclick='closeNpmConfigModal()'>&times;</button>
+    </div>
+    <div class='modal-body' id='npm-config-modal-body' style='max-height: 520px; overflow-y: auto; padding: 16px;'>
+      <div style='text-align: center; padding: 30px; color: var(--text-muted);'>🔄 Loading...</div>
+    </div>
+    <div class='modal-footer'>
+      <button class='modal-btn' onclick='closeNpmConfigModal()'>{MODAL_BTN_OK}</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal for package.json view -->
+<div id='pkg-json-modal' class='modal'>
+  <div class='modal-content' style='width: 650px; max-width: 95%;'>
+    <div class='modal-header'>
+      <span class='modal-title' id='pkg-json-modal-title'>package.json</span>
+      <button class='modal-close' onclick='closePkgJsonModal()'>&times;</button>
+    </div>
+    <div class='modal-body' id='pkg-json-modal-body' style='max-height: 440px; overflow-y: auto; padding: 15px;'></div>
+    <div class='modal-footer'>
+      <button class='modal-btn' onclick='closePkgJsonModal()'>{MODAL_BTN_OK}</button>
+    </div>
+  </div>
+</div>

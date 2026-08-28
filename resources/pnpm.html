@@ -1,0 +1,123 @@
+<div class='explorer-main'>
+<div class='toolbar'>
+  <div class='toolbar-left'>
+    <div class='address-bar-wrapper'>
+      <div class='breadcrumbs'>
+        <a href='/'>🏠</a> <span class='separator'>/</span> <span class='breadcrumb-current'>⚡ {PNPM_BREADCRUMB}</span>
+      </div>
+    </div>
+    <button id='protocol-switch-btn' onclick='toggleProtocol(event)' class='btn-back' style='height: 32px; padding: 0 10px; margin-left: 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px; flex-shrink: 0;' title='{LOBBY_PROTO_TOGGLE_TITLE}'></button>
+  </div>
+  <div class='toolbar-right' style='display: flex; align-items: center; gap: 8px;'>
+    <input type='text' id='pnpm-search-input' placeholder='{NPM_SEARCH_PLACEHOLDER}' oninput='onPnpmSearchChange()' style='width: 280px; height: 32px; box-sizing: border-box; padding: 4px 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); font-size: 0.9rem;'>
+    <button class='btn-back' onclick='triggerPnpmScan()' style='height: 32px; padding: 0 10px; margin-left: 0; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem;' id='pnpm-refresh-btn'>{PNPM_BTN_RESCAN}</button>
+  </div>
+</div>
+<div class='explorer-scroll-area'>
+
+<div style='padding: 8px 12px; background: var(--container-bg); border: 1px solid var(--border-color); border-radius: 6px; margin-bottom: 12px; font-size: 0.85rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;'>
+  <div style='display: flex; align-items: center; gap: 6px; font-weight: bold; color: #f69220;'><span style='font-size:1.2rem;'>⚡</span> PNPM</div>
+  <div style='display: flex; align-items: center; gap: 15px; flex-wrap: wrap;'>
+    <div><span style='color: var(--text-muted);'>Total Stores:</span> <strong id='pnpm-stat-stores-size'>-</strong></div>
+    <div style='width: 1px; height: 12px; background: var(--border-color);'></div>
+    <div><span style='color: var(--text-muted);'>Metadata:</span> <strong id='pnpm-stat-meta'>-</strong></div>
+    <div style='width: 1px; height: 12px; background: var(--border-color);'></div>
+    <div><span style='color: var(--text-muted);'>DLX Temp:</span> <strong id='pnpm-stat-dlx'>-</strong></div>
+  </div>
+  <div style='display: flex; align-items: center; gap: 6px;'>
+    <button onclick='cleanPnpmDlx()' class='btn' style='padding: 3px 8px; font-size: 0.8rem; cursor: pointer;'>{PNPM_BTN_CLEAN_DLX}</button>
+    <button onclick='showPnpmConfigModal()' class='config-btn-sm' style='padding: 3px 8px; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 4px; cursor: pointer;'>{PNPM_BTN_CONFIG_DETAILS}</button>
+  </div>
+</div>
+
+<h2 style='margin-top: 0; margin-bottom: 8px; font-size: 1.1rem; display: flex; align-items: center; gap: 6px;'>{PNPM_SEC_STORES}</h2>
+<div id='pnpm-stores-grid' class='custom-scrollbar' style='display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-bottom: 15px;'>
+  <div style='padding: 10px; color: var(--text-muted); text-align: center; grid-column: 1/-1; font-size: 0.85rem;'>🔄 {PNPM_LOADING}</div>
+</div>
+
+<h2 id='pnpm-store-pkgs-title' style='margin-top: 0; margin-bottom: 8px; font-size: 1.1rem; display: flex; align-items: center; justify-content: space-between;'>
+  <span id='pnpm-store-pkgs-title-text'>{PNPM_SEC_GLOBAL}</span>
+</h2>
+<div class='gradle-deps-container' style='border: 1px solid var(--border-color); border-radius: 6px; background: var(--container-bg); position: relative; margin-bottom: 8px;'>
+  <table class='file-table' style='width: 100%; border-collapse: collapse; table-layout: fixed;'>
+    <thead style='background: var(--container-bg); box-shadow: 0 1px 0 var(--border-color);'>
+      <tr style='background: var(--bg-color); border-bottom: 1px solid var(--border-color); text-align: left;'>
+        <th style='padding: 8px 10px; width: 44%;'>{NPM_TH_NAME}</th>
+        <th style='padding: 8px 10px; width: 18%;'>{NPM_TH_VERSION}</th>
+        <th style='padding: 8px 10px; width: 16%; text-align: center;'>{PNPM_TH_FILE_COUNT}</th>
+        <th style='padding: 8px 10px; width: 22%; text-align: right;'>{NPM_TH_SIZE}</th>
+      </tr>
+    </thead>
+    <tbody id='pnpm-pkgs-tbody'>
+      <tr>
+        <td colspan='4' style='padding: 20px; text-align: center; color: var(--text-muted);'>🔄 {PNPM_LOADING}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class='pagination-container' id='pnpm-pagination' style='display: flex; align-items: center; justify-content: space-between; padding: 10px 4px; font-size: 0.85rem; color: var(--text-muted);'>
+  <div style='display: flex; align-items: center; gap: 8px;'>
+    <span id='pnpm-pagination-info'>-</span>
+    <label style='margin-left: 12px;'>{PAGE_SIZE_LABEL}
+      <select id='pnpm-page-size' class='pagination-select' onchange='changePnpmPageSize()'>
+        <option value='20'>20</option>
+        <option value='50' selected>50</option>
+        <option value='100'>100</option>
+      </select>
+    </label>
+  </div>
+  <div style='display: flex; gap: 4px;'>
+    <button class='pagination-btn' onclick='pnpmGoToPage("first")' id='pnpm-btn-first'>{PAGE_FIRST}</button>
+    <button class='pagination-btn' onclick='pnpmGoToPage("prev")' id='pnpm-btn-prev'>{PAGE_PREV}</button>
+    <button class='pagination-btn' onclick='pnpmGoToPage("next")' id='pnpm-btn-next'>{PAGE_NEXT}</button>
+    <button class='pagination-btn' onclick='pnpmGoToPage("last")' id='pnpm-btn-last'>{PAGE_LAST}</button>
+  </div>
+</div>
+
+</div> <!-- explorer-scroll-area -->
+</div> <!-- explorer-main -->
+
+<div class='explorer-preview' id='preview-pane' style='width: 360px; flex-shrink: 0; background: var(--container-bg); border-left: 1px solid var(--border-color); display: flex; flex-direction: column; overflow: hidden; padding: 0 !important;'>
+  <div class='sidebar-expand-btn' onclick='toggleSidebar("right")' style='display: none;'>{PREVIEW_BTN_EXPAND}</div>
+  <div class='sidebar-title' style='display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 12px 15px; border-bottom: 1px solid var(--border-color); box-sizing: border-box;'>
+    <span>{PNPM_DETAIL_TITLE}</span>
+    <span class='sidebar-toggle-btn' onclick='toggleSidebar("right"); event.stopPropagation();' style='cursor: pointer; font-size: 0.8rem; color: var(--text-muted); padding: 2px 6px; border-radius: 4px;' title='{PREVIEW_BTN_COLLAPSE}'>▶</span>
+  </div>
+  <div id='pnpm-preview-body' style='flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; min-width: 0; width: 100%; box-sizing: border-box;'>
+    <div style='text-align: center; color: var(--text-muted); margin-top: 40px; padding: 10px;'>
+      <span style='font-size: 2.5rem; display: block; margin-bottom: 12px;'>⚡</span>
+      {PNPM_DETAIL_EMPTY}
+    </div>
+  </div>
+</div>
+
+<!-- Modal for PNPM package versions list -->
+<div id='pnpm-versions-modal' class='modal' style='z-index: 2100;'>
+  <div class='modal-content' style='width: 560px; max-width: 90%;'>
+    <div class='modal-header'>
+      <span class='modal-title' id='pnpm-versions-modal-title'></span>
+      <button class='modal-close' onclick='closePnpmVersionsModal()'>&times;</button>
+    </div>
+    <div class='modal-body custom-scrollbar' id='pnpm-versions-modal-body' style='max-height: 380px; overflow-y: auto; padding: 15px;'></div>
+    <div class='modal-footer'>
+      <button class='modal-btn' onclick='closePnpmVersionsModal()'>{MODAL_BTN_OK}</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal for PNPM Environment and Configuration Details -->
+<div id='pnpm-config-modal' class='modal' style='z-index: 2100;'>
+  <div class='modal-content config-modal-content'>
+    <div class='modal-header'>
+      <span class='modal-title'>{PNPM_MODAL_CONFIG_TITLE}</span>
+      <button class='modal-close' onclick='closePnpmConfigModal()'>&times;</button>
+    </div>
+    <div class='modal-body custom-scrollbar' id='pnpm-config-modal-body'>
+      <!-- 动态填充 -->
+    </div>
+    <div class='modal-footer'>
+      <button class='modal-btn' onclick='closePnpmConfigModal()'>{MODAL_BTN_OK}</button>
+    </div>
+  </div>
+</div>

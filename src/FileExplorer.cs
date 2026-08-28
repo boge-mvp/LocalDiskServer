@@ -343,18 +343,10 @@ namespace LocalDiskServer
             }
         }
 
-        public static void ServeDirectory(HttpListenerResponse response, string dirPath, string webPath)
+        public static string RenderSidebar(string activePath = "", string currentLocale = "", string dirPath = "")
         {
             var favList = GetFavorites();
             StringBuilder sb = new StringBuilder();
-            string folderName = Path.GetFileName(dirPath);
-            if (string.IsNullOrEmpty(folderName)) folderName = dirPath;
-            sb.Append(HttpServer.GetHtmlHeader(I18nManager.T("explorer_page_title", folderName), webPath, "layout-explorer"));
-            sb.AppendFormat("<script>const currentDirPath = '{0}';</script>", dirPath.Replace("\\", "\\\\").Replace("'", "\\'"));
-
-            string[] parts = webPath.Split(new char[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-
-            // Left Sidebar Tree Pane
             sb.Append("<div class='explorer-sidebar' id='sidebar-pane'>");
             sb.AppendFormat("  <div class='sidebar-expand-btn' onclick='toggleSidebar(\"left\")' style='display: none;'>{0}</div>", I18nManager.T("nav_btn_expand"));
             sb.Append("  <div class='sidebar-title' style='display: flex; justify-content: space-between; align-items: center; width: 100%;'>");
@@ -380,7 +372,7 @@ namespace LocalDiskServer
             var quickItems = GetStandardQuickAccessItems();
             foreach (var q in quickItems)
             {
-                bool isActive = dirPath.Equals(q.PhysicalPath, StringComparison.OrdinalIgnoreCase);
+                bool isActive = !string.IsNullOrEmpty(dirPath) && dirPath.Equals(q.PhysicalPath, StringComparison.OrdinalIgnoreCase);
                 sb.AppendFormat("        <a href='{0}' class='tree-link{1}' title='{2}'>{3} {4}</a>",
                     q.WebPath, isActive ? " active-node" : "", q.PhysicalPath.Replace("'", "\'"), q.Emoji, q.Title);
             }
@@ -404,7 +396,7 @@ namespace LocalDiskServer
                     if (string.IsNullOrEmpty(fName)) fName = fav;
                     string webLink = HttpServer.PhysicalToWebPath(fav);
                     sb.AppendFormat("        <a href='{0}' class='tree-link{1}' title='{2}'>📁 {3}</a>", 
-                        webLink, dirPath.Equals(fav, StringComparison.OrdinalIgnoreCase) ? " active-node" : "", fav.Replace("'", "\'"), fName);
+                        webLink, (!string.IsNullOrEmpty(dirPath) && dirPath.Equals(fav, StringComparison.OrdinalIgnoreCase)) ? " active-node" : "", fav.Replace("'", "\'"), fName);
                 }
             }
             sb.Append("      </div>");
@@ -426,10 +418,9 @@ namespace LocalDiskServer
                     string dPath = d.Name;
                     string dName = d.Name.TrimEnd('\\');
                     string dWeb = "/" + dName.ToLower().Replace(":", "") + "/";
-                    bool isCurrentDrive = dirPath.StartsWith(dPath, StringComparison.OrdinalIgnoreCase);
                     
                     sb.AppendFormat("        <div class='tree-node'>");
-                    sb.AppendFormat("          <div class='tree-row{0}' data-path='{1}'>", (dirPath.Equals(dPath, StringComparison.OrdinalIgnoreCase)) ? " active" : "", dPath.Replace("\\", "\\\\").Replace("'", "\\'"));
+                    sb.AppendFormat("          <div class='tree-row{0}' data-path='{1}'>", (!string.IsNullOrEmpty(dirPath) && dirPath.Equals(dPath, StringComparison.OrdinalIgnoreCase)) ? " active" : "", dPath.Replace("\\", "\\\\").Replace("'", "\\'"));
                     sb.AppendFormat("            <span class='tree-arrow collapsed' onclick='expandTreeNode(event, \"{0}\")'>▶</span>", dPath.Replace("\\", "\\\\").Replace("'", "\\'"));
                     sb.AppendFormat("            <a href='{0}' class='tree-link-inline' style='color:inherit;'>💽 {1}</a>", dWeb, dName);
                     sb.AppendFormat("          </div>");
@@ -449,17 +440,50 @@ namespace LocalDiskServer
                 sb.AppendFormat("        <span class='tree-label' style='font-weight: bold; cursor: pointer;' onclick='toggleDevEcosystem(event)'>📦 {0}</span>", I18nManager.T("nav_dev_ecosystem"));
                 sb.Append("      </div>");
                 sb.Append("      <div class='tree-children' id='children-dev-ecosystem'>");
-                sb.AppendFormat("        <div class='tree-node'><div class='tree-row'><a href='/?view=gradle' class='tree-link-inline' style='color:inherit;'>☕ {0}</a></div></div>", I18nManager.T("nav_gradle"));
-                sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>🪶 {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_maven"), I18nManager.T("tag_coming_soon"));
-                sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>📦 {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_npm"), I18nManager.T("tag_coming_soon"));
-                sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>⚡ {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_pnpm"), I18nManager.T("tag_coming_soon"));
+                
+                string gradleActive = (activePath == "/gradle" || activePath == "gradle" || activePath == "/?view=gradle") ? "active-node active" : "";
+                string npmActive = (activePath == "/npm" || activePath == "npm") ? "active-node active" : "";
+                string pnpmActive = (activePath == "/pnpm" || activePath == "pnpm") ? "active-node active" : "";
+
+                string mavenActive = (activePath == "/maven" || activePath == "maven") ? "active-node active" : "";
+
+                sb.AppendFormat("        <div class='tree-node'><div class='tree-row {1}'><a href='/?view=gradle' class='tree-link-inline {1}' style='color:inherit;'>☕ {0}</a></div></div>", I18nManager.T("nav_gradle"), gradleActive);
+                sb.AppendFormat("        <div class='tree-node'><div class='tree-row {1}'><a href='/maven' class='tree-link-inline {1}' style='color:inherit;'>🪶 {0}</a></div></div>", I18nManager.T("nav_maven"), mavenActive);
+                sb.AppendFormat("        <div class='tree-node'><div class='tree-row {1}'><a href='/npm' class='tree-link-inline {1}' style='color:inherit;'>📦 {0}</a></div></div>", I18nManager.T("nav_npm"), npmActive);
+                sb.AppendFormat("        <div class='tree-node'><div class='tree-row {1}'><a href='/pnpm' class='tree-link-inline {1}' style='color:inherit;'>⚡ {0}</a></div></div>", I18nManager.T("nav_pnpm"), pnpmActive);
                 sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>🤖 {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_android"), I18nManager.T("tag_coming_soon"));
                 sb.Append("      </div>");
                 sb.Append("    </div>");
             }
 
+            sb.Append("  </div>"); // end tree-container
+
+            // 6. Sidebar Footer: Settings & Logs & Version
+            sb.Append("  <div class='sidebar-footer'>");
+            sb.Append("    <div class='sidebar-footer-actions'>");
+            sb.AppendFormat("      <button type='button' class='sidebar-footer-btn' onclick='showSettingsModal()' title='{0}'><span>⚙️</span> <span>{0}</span></button>", I18nManager.T("lobby_settings_btn"));
+            sb.AppendFormat("      <button type='button' class='sidebar-footer-btn' onclick='showLogs()' title='{0}'><span>📝</span> <span>{0}</span></button>", I18nManager.T("lobby_logs_btn"));
+            sb.Append("    </div>");
+            sb.AppendFormat("    <div class='sidebar-footer-version' title='LocalDiskServer v{0}'>⚡ LocalDiskServer v{0}</div>", ServerApplicationContext.APP_VERSION);
             sb.Append("  </div>");
+
             sb.Append("</div>");
+            return sb.ToString();
+        }
+
+        public static void ServeDirectory(HttpListenerResponse response, string dirPath, string webPath)
+        {
+            var favList = GetFavorites();
+            StringBuilder sb = new StringBuilder();
+            string folderName = Path.GetFileName(dirPath);
+            if (string.IsNullOrEmpty(folderName)) folderName = dirPath;
+            sb.Append(HttpServer.GetHtmlHeader(I18nManager.T("explorer_page_title", folderName), webPath, "layout-explorer"));
+            sb.AppendFormat("<script>const currentDirPath = '{0}';</script>", dirPath.Replace("\\", "\\\\").Replace("'", "\\'"));
+
+            string[] parts = webPath.Split(new char[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+
+            // Left Sidebar Tree Pane
+            sb.Append(RenderSidebar(webPath, "", dirPath));
 
             // 5. Middle Main Content Panel
             sb.Append("<div class='explorer-main'>");
