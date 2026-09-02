@@ -72,7 +72,7 @@ namespace LocalDiskServer
         public static string language = "";
 
         public static string configFile = "server_config.ini";
-        public static string textExtensionsStr = "txt,md,log,ini,conf,cfg,json,js,css,html,htm,xml,bat,sh,py,java,cs,go,rs,cpp,h,c,properties,yaml,yml,sql,ts";
+        public static string textExtensionsStr = "txt,md,log,ini,conf,cfg,json,js,css,xml,bat,sh,py,java,cs,go,rs,cpp,h,c,properties,yaml,yml,sql,ts";
         public static string favoritesStr = "";
 
         // 命令行控制与测试模式变量
