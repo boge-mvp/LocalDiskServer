@@ -16,6 +16,20 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
+      - name: Inject Version from Tag
+        shell: pwsh
+        run: |
+          $v = '${{ github.ref_name }}' -replace '^v',''
+          Write-Host "Injecting version from tag: $v"
+          $src = Get-Content src/Program.cs -Raw
+          $new = $src -replace '(APP_VERSION = ")[\d.]+(")', "`${1}$v`${2}"
+          if ($new -eq $src) {
+            Write-Error "Version injection failed: APP_VERSION pattern not found in src/Program.cs."
+            exit 1
+          }
+          Set-Content src/Program.cs -Value $new -NoNewline
+          Write-Host "Injected: $((Select-String -Path src/Program.cs -Pattern 'APP_VERSION').Line.Trim())"
+
       - name: Compile Single-Binary LocalDiskServer
         shell: pwsh
         run: |
@@ -30,11 +44,37 @@ jobs:
           }
           $item = Get-Item "dist/LocalDiskServer.exe"
           Write-Host "Artifact generated successfully: $($item.FullName) ($([Math]::Round($item.Length / 1KB, 2)) KB)"
+          $expected = '${{ github.ref_name }}' -replace '^v',''
+          $actual = $item.VersionInfo.FileVersion
+          Write-Host "Version check - tag: $expected | exe: $actual"
+          if ($actual -ne $expected) {
+            Write-Error "Version mismatch: tag is $expected but exe reports $actual."
+            exit 1
+          }
+
+      - name: Generate Categorized Changelog
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          commitMode: "true"
+          configuration: ".github/changelog_configuration.json"
+
+      - name: Generate Artifact SHA256
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash "dist/LocalDiskServer.exe" -Algorithm SHA256).Hash
+          "$hash  LocalDiskServer.exe" | Out-File "dist/LocalDiskServer.exe.sha256" -Encoding ascii
+          Write-Host "SHA256: $hash"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/LocalDiskServer.exe
+          files: |
+            dist/LocalDiskServer.exe
+            dist/LocalDiskServer.exe.sha256
+          body: ${{ steps.changelog.outputs.changelog }}
           generate_release_notes: true
           draft: false
           prerelease: false

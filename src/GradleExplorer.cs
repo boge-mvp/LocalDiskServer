@@ -675,8 +675,10 @@ namespace LocalDiskServer
             return "";
         }
 
-public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpListenerResponse response)
+        public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpListenerResponse response)
         {
+            if (!rawPath.StartsWith("api/gradle/", StringComparison.OrdinalIgnoreCase)) return false;
+
             if (!ServerApplicationContext.enable_dev_ecosystem)
             {
                 HttpServer.ServeJson(response, 403, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("err_dev_ecosystem_disabled"))));

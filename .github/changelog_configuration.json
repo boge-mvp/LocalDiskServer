@@ -1,0 +1,14 @@
+{
+  "categories": [
+    { "title": "## 🚀 新功能", "labels": ["feat"] },
+    { "title": "## 🐛 问题修复", "labels": ["fix"] },
+    { "title": "## ♻️ 重构优化", "labels": ["refactor"] },
+    { "title": "## 📦 其他变更", "labels": ["default"] }
+  ],
+  "label_extractor": [
+    { "pattern": "^(feat|feature)[:(]", "target": "feat" },
+    { "pattern": "^fix[:(]", "target": "fix" },
+    { "pattern": "^refactor[:(]", "target": "refactor" }
+  ],
+  "commit_template": "- {{MESSAGE}}"
+}

@@ -19,6 +19,35 @@ namespace LocalDiskServer
             try
             {
                 ServerApplicationContext.ParseCommandLineArgs(args);
+
+                // 右键菜单唤起：若已有实例在运行，直接用浏览器打开目标目录后退出
+                if (!string.IsNullOrEmpty(ServerApplicationContext.openTargetPath))
+                {
+                    // 第二进程即将退出，内存日志对其无效：日志落盘 launch_log.txt（先初始化语言保证日志语言一致）
+                    I18nManager.Initialize(null);
+                    int existingPort = ServerApplicationContext.QuickReadConfigPort();
+                    if (ServerApplicationContext.IsPortAlive(existingPort))
+                    {
+                        string url = string.Format("http://localhost:{0}{1}", existingPort, ServerApplicationContext.BuildFolderUrl(ServerApplicationContext.openTargetPath));
+                        try
+                        {
+                            Process.Start(url);
+                            ServerApplicationContext.AppendLaunchLog(I18nManager.T("log_open_via_running_instance", existingPort, url));
+                        }
+                        catch (Exception ex)
+                        {
+                            ServerApplicationContext.AppendLaunchLog(I18nManager.T("log_open_browser_fail", ex.Message));
+                        }
+                        return;
+                    }
+                }
+                if (!string.IsNullOrEmpty(ServerApplicationContext.openTargetInvalidPath))
+                {
+                    // 显式指定的打开目标目录无效：记录具体原因后忽略，继续正常启动
+                    I18nManager.Initialize(null);
+                    ServerApplicationContext.AppendLaunchLog(I18nManager.T("log_open_target_invalid", ServerApplicationContext.openTargetInvalidPath));
+                }
+
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
                 Application.Run(new ServerApplicationContext());
@@ -59,6 +88,8 @@ namespace LocalDiskServer
         public static MenuItem httpsToggleMenuItem;
         public static MenuItem devEcosystemMenuItem;
         public static MenuItem languageSubMenu;
+        public static MenuItem shellMenuMenuItem;
+        public static MenuItem classicMenuMenuItem;
         public static MenuItem startupMenuItem;
         public static MenuItem exitMenuItem;
 
@@ -80,6 +111,8 @@ namespace LocalDiskServer
         public static bool noBrowser = false;
         public static int? overridePort = null;
         public static int? overrideHttpsPort = null;
+        public static string openTargetPath = null;
+        public static string openTargetInvalidPath = null;
 
         public static void ParseCommandLineArgs(string[] args)
         {
@@ -117,6 +150,23 @@ namespace LocalDiskServer
                         overrideHttpsPort = p;
                     }
                 }
+                else if ((string.Equals(arg, "--open", StringComparison.OrdinalIgnoreCase) || string.Equals(arg, "-open", StringComparison.OrdinalIgnoreCase)) && i + 1 < args.Length)
+                {
+                    string p = args[++i];
+                    if (Directory.Exists(p) || File.Exists(p))
+                    {
+                        openTargetPath = Path.GetFullPath(p);
+                    }
+                    else
+                    {
+                        openTargetInvalidPath = p;
+                    }
+                }
+                else if (!arg.StartsWith("-") && !arg.StartsWith("/") && (Directory.Exists(arg) || File.Exists(arg)))
+                {
+                    // 兼容直接位置参数（右键菜单 verb 传参场景）
+                    openTargetPath = Path.GetFullPath(arg);
+                }
             }
         }
 
@@ -143,6 +193,20 @@ namespace LocalDiskServer
 
             // 启动标准多线程 HTTP 服务器
             HttpServer.StartServer();
+
+            // 右键菜单唤起：服务启动后自动打开目标目录
+            if (!string.IsNullOrEmpty(openTargetPath))
+            {
+                try
+                {
+                    Log(I18nManager.T("log_open_target", openTargetPath));
+                    Process.Start(string.Format("http://localhost:{0}{1}", port, BuildFolderUrl(openTargetPath)));
+                }
+                catch (Exception ex)
+                {
+                    Log(I18nManager.T("log_open_browser_fail", ex.Message));
+                }
+            }
 
             // 若启用了开发者生态管理，才启动后台线程异步扫描
             if (enable_dev_ecosystem)
@@ -394,6 +458,13 @@ namespace LocalDiskServer
             BuildLanguageSubMenu();
             trayMenu.MenuItems.Add(languageSubMenu);
 
+            shellMenuMenuItem = new MenuItem(I18nManager.T("menu_shell_menu"), ToggleShellMenu);
+            shellMenuMenuItem.Checked = IsShellMenuRegistered();
+            trayMenu.MenuItems.Add(shellMenuMenuItem);
+            classicMenuMenuItem = new MenuItem(I18nManager.T("menu_classic_menu"), ToggleClassicMenu);
+            classicMenuMenuItem.Checked = IsClassicMenuEnabled();
+            trayMenu.MenuItems.Add(classicMenuMenuItem);
+
             startupMenuItem = new MenuItem(I18nManager.T("menu_startup"), ToggleStartup);
             startupMenuItem.Checked = IsStartupEnabled();
             trayMenu.MenuItems.Add(startupMenuItem);
@@ -498,6 +569,16 @@ namespace LocalDiskServer
             {
                 languageSubMenu.Text = I18nManager.T("menu_language");
                 BuildLanguageSubMenu();
+            }
+            if (shellMenuMenuItem != null)
+            {
+                shellMenuMenuItem.Text = I18nManager.T("menu_shell_menu");
+                shellMenuMenuItem.Checked = IsShellMenuRegistered();
+            }
+            if (classicMenuMenuItem != null)
+            {
+                classicMenuMenuItem.Text = I18nManager.T("menu_classic_menu");
+                classicMenuMenuItem.Checked = IsClassicMenuEnabled();
             }
             if (startupMenuItem != null) startupMenuItem.Text = I18nManager.T("menu_startup");
             if (exitMenuItem != null) exitMenuItem.Text = I18nManager.T("menu_exit");
@@ -752,6 +833,243 @@ namespace LocalDiskServer
                 MessageBox.Show(I18nManager.T("dialog_startup_fail", ex.Message), I18nManager.T("dialog_tip"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
+        }
+
+        // ==================== 文件夹右键菜单集成 ====================
+
+        public static void AppendLaunchLog(string message)
+        {
+            try
+            {
+                string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "launch_log.txt");
+                if (File.Exists(logPath) && new FileInfo(logPath).Length > 1024 * 1024)
+                {
+                    File.WriteAllText(logPath, "");
+                }
+                File.AppendAllText(logPath, string.Format("[{0:yyyy-MM-dd HH:mm:ss}] {1}\r\n", DateTime.Now, message));
+            }
+            catch { }
+        }
+
+        public static string BuildFolderUrl(string dir)
+        {
+            if (string.IsNullOrEmpty(dir)) return "/";
+            try
+            {
+                string fullPath = Path.GetFullPath(dir);
+                string root = Path.GetPathRoot(fullPath);
+                if (string.IsNullOrEmpty(root) || root.Length < 2 || !char.IsLetter(root[0])) return "/";
+
+                StringBuilder sb = new StringBuilder();
+                sb.Append('/').Append(char.ToUpper(root[0]));
+
+                string rest = fullPath.Substring(root.Length).TrimEnd('\\', '/');
+                if (!string.IsNullOrEmpty(rest))
+                {
+                    string[] segments = rest.Split('\\', '/');
+                    foreach (string seg in segments)
+                    {
+                        if (string.IsNullOrEmpty(seg)) continue;
+                        sb.Append('/').Append(Uri.EscapeDataString(seg));
+                    }
+                }
+                if (File.Exists(fullPath))
+                {
+                    return sb.ToString();
+                }
+                sb.Append('/');
+                return sb.ToString();
+            }
+            catch { return "/"; }
+        }
+
+        public static int QuickReadConfigPort()
+        {
+            try
+            {
+                string configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, configFile);
+                if (File.Exists(configPath))
+                {
+                    string[] lines = File.ReadAllLines(configPath);
+                    foreach (string line in lines)
+                    {
+                        if (line.StartsWith("port=", StringComparison.OrdinalIgnoreCase))
+                        {
+                            int p;
+                            if (int.TryParse(line.Substring(5).Trim(), out p)) return p;
+                        }
+                    }
+                }
+            }
+            catch { }
+            return port;
+        }
+
+        public static bool IsPortAlive(int targetPort)
+        {
+            try
+            {
+                using (System.Net.Sockets.TcpClient client = new System.Net.Sockets.TcpClient())
+                {
+                    IAsyncResult result = client.BeginConnect("127.0.0.1", targetPort, null, null);
+                    bool connected = result.AsyncWaitHandle.WaitOne(400);
+                    if (connected)
+                    {
+                        client.EndConnect(result);
+                        return true;
+                    }
+                    return false;
+                }
+            }
+            catch { return false; }
+        }
+
+        public static bool IsShellMenuRegistered()
+        {
+            try
+            {
+                using (RegistryKey dirKey = Registry.CurrentUser.OpenSubKey(@"Software\Classes\Directory\shell\LocalDiskServer", false))
+                {
+                    if (dirKey != null) return true;
+                }
+                using (RegistryKey fileKey = Registry.CurrentUser.OpenSubKey(@"Software\Classes\*\shell\LocalDiskServer", false))
+                {
+                    if (fileKey != null) return true;
+                }
+                return false;
+            }
+            catch { return false; }
+        }
+
+        public static bool SetShellMenuRegistered(bool enable)
+        {
+            try
+            {
+                if (enable)
+                {
+                    using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Directory\shell\LocalDiskServer"))
+                    {
+                        if (key == null) return false;
+                        key.SetValue("", I18nManager.T("shell_menu_text"));
+                        key.SetValue("Icon", Application.ExecutablePath);
+                        using (RegistryKey cmd = key.CreateSubKey("command"))
+                        {
+                            if (cmd == null) return false;
+                            cmd.SetValue("", "\"" + Application.ExecutablePath + "\" --open \"%1\"");
+                        }
+                    }
+                    using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\*\shell\LocalDiskServer"))
+                    {
+                        if (key == null) return false;
+                        key.SetValue("", I18nManager.T("shell_menu_text"));
+                        key.SetValue("Icon", Application.ExecutablePath);
+                        using (RegistryKey cmd = key.CreateSubKey("command"))
+                        {
+                            if (cmd == null) return false;
+                            cmd.SetValue("", "\"" + Application.ExecutablePath + "\" --open \"%1\"");
+                        }
+                    }
+                    Log(I18nManager.T("log_shell_menu_registered"));
+                }
+                else
+                {
+                    using (RegistryKey shell = Registry.CurrentUser.OpenSubKey(@"Software\Classes\Directory\shell", true))
+                    {
+                        if (shell != null) shell.DeleteSubKeyTree("LocalDiskServer", false);
+                    }
+                    using (RegistryKey shell = Registry.CurrentUser.OpenSubKey(@"Software\Classes\*", true))
+                    {
+                        if (shell != null) shell.DeleteSubKeyTree("LocalDiskServer", false);
+                    }
+                    Log(I18nManager.T("log_shell_menu_unregistered"));
+                }
+                if (shellMenuMenuItem != null) shellMenuMenuItem.Checked = enable;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log(I18nManager.T("log_shell_menu_fail", ex.Message));
+                MessageBox.Show(I18nManager.T("log_shell_menu_fail", ex.Message), I18nManager.T("dialog_tip"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+        }
+
+        private void ToggleShellMenu(object sender, EventArgs e)
+        {
+            SetShellMenuRegistered(!IsShellMenuRegistered());
+        }
+
+        public static bool IsClassicMenuEnabled()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32", false))
+                {
+                    if (key == null) return false;
+                    object v = key.GetValue("");
+                    return v != null && string.IsNullOrEmpty(v.ToString());
+                }
+            }
+            catch { return false; }
+        }
+
+        public static void SetClassicMenu(bool enable)
+        {
+            try
+            {
+                string keyPath = @"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}";
+                if (enable)
+                {
+                    using (RegistryKey key = Registry.CurrentUser.CreateSubKey(keyPath + "\\InprocServer32"))
+                    {
+                        if (key == null) throw new Exception("CreateSubKey failed");
+                        key.SetValue("", "");
+                    }
+                }
+                else
+                {
+                    using (RegistryKey key = Registry.CurrentUser.OpenSubKey(keyPath, true))
+                    {
+                        if (key != null) key.DeleteSubKeyTree("InprocServer32", false);
+                    }
+                }
+                RestartExplorer();
+                Log(I18nManager.T(enable ? "log_classic_menu_enabled" : "log_classic_menu_disabled"));
+            }
+            catch (Exception ex)
+            {
+                Log(I18nManager.T("log_classic_menu_fail", ex.Message));
+                MessageBox.Show(I18nManager.T("log_classic_menu_fail", ex.Message), I18nManager.T("dialog_tip"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                if (classicMenuMenuItem != null) classicMenuMenuItem.Checked = IsClassicMenuEnabled();
+            }
+        }
+
+        private static void RestartExplorer()
+        {
+            try
+            {
+                foreach (Process p in Process.GetProcessesByName("explorer"))
+                {
+                    try { p.Kill(); } catch { }
+                }
+                System.Threading.Thread.Sleep(800);
+                Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = true });
+                System.Threading.Thread.Sleep(2000);
+                if (trayIcon != null)
+                {
+                    trayIcon.Visible = false;
+                    trayIcon.Visible = true;
+                }
+            }
+            catch { }
+        }
+
+        private void ToggleClassicMenu(object sender, EventArgs e)
+        {
+            SetClassicMenu(!IsClassicMenuEnabled());
         }
 
         public static bool HandleSettingsApi(string rawPath, HttpListenerRequest request, HttpListenerResponse response)

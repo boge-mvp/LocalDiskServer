@@ -757,22 +757,32 @@ namespace LocalDiskServer
                     string path = request.QueryString["path"];
                     if (string.IsNullOrEmpty(path))
                     {
+                        Logger.Log(I18nManager.T("log_api_missing_path"));
                         HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_missing_path"))));
                         return true;
                     }
-                    var favs = FileExplorer.GetFavorites();
-                    bool isFav = false;
-                    if (favs.Contains(path))
+                    try
                     {
-                        favs.Remove(path);
+                        var favs = FileExplorer.GetFavorites();
+                        bool isFav = false;
+                        if (favs.Contains(path))
+                        {
+                            favs.Remove(path);
+                        }
+                        else
+                        {
+                            favs.Add(path);
+                            isFav = true;
+                        }
+                        FileExplorer.SaveFavorites(favs);
+                        Logger.Log(I18nManager.T(isFav ? "log_favorite_added" : "log_favorite_removed", path));
+                        HttpServer.ServeJson(response, 200, string.Format("{{\"success\":true,\"isFavorite\":{0}}}", isFav ? "true" : "false"));
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        favs.Add(path);
-                        isFav = true;
+                        Logger.Log(I18nManager.T("log_favorite_fail", path, ex.Message));
+                        HttpServer.ServeJson(response, 500, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(ex.Message)));
                     }
-                    FileExplorer.SaveFavorites(favs);
-                    HttpServer.ServeJson(response, 200, string.Format("{{\"success\":true,\"isFavorite\":{0}}}", isFav ? "true" : "false"));
                 }
                 else if (rawPath.Equals("api/file/delete", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1120,11 +1130,13 @@ namespace LocalDiskServer
                     string pathStr = request.QueryString["path"];
                     if (string.IsNullOrEmpty(pathStr))
                     {
+                        Logger.Log(I18nManager.T("log_api_missing_path"));
                         HttpServer.ServeJson(response, 400, string.Format("{{\"success\":false,\"message\":\"{0}\"}}", HttpServer.EscapeJson(I18nManager.T("api_missing_path"))));
                         return true;
                     }
                     bool exists = Directory.Exists(pathStr) || File.Exists(pathStr);
                     bool isDir = Directory.Exists(pathStr);
+                    Logger.Log(I18nManager.T(isDir ? "log_addrbar_found_dir" : (exists ? "log_addrbar_found_file" : "log_addrbar_not_found"), pathStr));
                     HttpServer.ServeJson(response, 200, string.Format("{{\"success\":true,\"exists\":{0},\"isDir\":{1}}}", exists.ToString().ToLower(), isDir.ToString().ToLower()));
                 }
                 else if (rawPath.Equals("api/explorer/tree", StringComparison.OrdinalIgnoreCase))

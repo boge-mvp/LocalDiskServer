@@ -9,17 +9,65 @@ namespace LocalDiskServer
         public static readonly List<string> logsList = new List<string>();
         public static readonly object logsLock = new object();
 
+        private static readonly string diskLogDir = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
+
+        static Logger()
+        {
+            // 启动时清理 7 天前的旧磁盘日志（整体兜底，绝不影响启动）
+            try
+            {
+                if (System.IO.Directory.Exists(diskLogDir))
+                {
+                    DateTime threshold = DateTime.Now.Date.AddDays(-7);
+                    foreach (string file in System.IO.Directory.GetFiles(diskLogDir, "server_*.log"))
+                    {
+                        string name = System.IO.Path.GetFileNameWithoutExtension(file);
+                        DateTime fileDate;
+                        if (name.Length == 15 &&
+                            DateTime.TryParseExact(name.Substring(7), "yyyyMMdd",
+                                System.Globalization.CultureInfo.InvariantCulture,
+                                System.Globalization.DateTimeStyles.None, out fileDate) &&
+                            fileDate < threshold)
+                        {
+                            try { System.IO.File.Delete(file); } catch { }
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
         public static void Log(string message)
         {
             string timeStr = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            string line = "[" + timeStr + "] " + message;
             lock (logsLock)
             {
-                logsList.Add("[" + timeStr + "] " + message);
+                logsList.Add(line);
                 if (logsList.Count > 1000)
                 {
                     logsList.RemoveAt(0);
                 }
             }
+            AppendDiskLog(line);
+        }
+
+        private static void AppendDiskLog(string line)
+        {
+            try
+            {
+                if (!System.IO.Directory.Exists(diskLogDir))
+                {
+                    System.IO.Directory.CreateDirectory(diskLogDir);
+                }
+                string filePath = System.IO.Path.Combine(diskLogDir, "server_" + DateTime.Now.ToString("yyyyMMdd") + ".log");
+                // 与内存日志同一把锁序列化并发写者，避免多线程同时 AppendAllText 抛文件占用异常
+                lock (logsLock)
+                {
+                    System.IO.File.AppendAllText(filePath, line + "\r\n", System.Text.Encoding.UTF8);
+                }
+            }
+            catch { }
         }
 
         public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpListenerResponse response)
