@@ -89,7 +89,6 @@ namespace LocalDiskServer
         public static MenuItem devEcosystemMenuItem;
         public static MenuItem languageSubMenu;
         public static MenuItem shellMenuMenuItem;
-        public static MenuItem classicMenuMenuItem;
         public static MenuItem startupMenuItem;
         public static MenuItem exitMenuItem;
 
@@ -461,9 +460,6 @@ namespace LocalDiskServer
             shellMenuMenuItem = new MenuItem(I18nManager.T("menu_shell_menu"), ToggleShellMenu);
             shellMenuMenuItem.Checked = IsShellMenuRegistered();
             trayMenu.MenuItems.Add(shellMenuMenuItem);
-            classicMenuMenuItem = new MenuItem(I18nManager.T("menu_classic_menu"), ToggleClassicMenu);
-            classicMenuMenuItem.Checked = IsClassicMenuEnabled();
-            trayMenu.MenuItems.Add(classicMenuMenuItem);
 
             startupMenuItem = new MenuItem(I18nManager.T("menu_startup"), ToggleStartup);
             startupMenuItem.Checked = IsStartupEnabled();
@@ -574,11 +570,6 @@ namespace LocalDiskServer
             {
                 shellMenuMenuItem.Text = I18nManager.T("menu_shell_menu");
                 shellMenuMenuItem.Checked = IsShellMenuRegistered();
-            }
-            if (classicMenuMenuItem != null)
-            {
-                classicMenuMenuItem.Text = I18nManager.T("menu_classic_menu");
-                classicMenuMenuItem.Checked = IsClassicMenuEnabled();
             }
             if (startupMenuItem != null) startupMenuItem.Text = I18nManager.T("menu_startup");
             if (exitMenuItem != null) exitMenuItem.Text = I18nManager.T("menu_exit");
@@ -997,79 +988,6 @@ namespace LocalDiskServer
         private void ToggleShellMenu(object sender, EventArgs e)
         {
             SetShellMenuRegistered(!IsShellMenuRegistered());
-        }
-
-        public static bool IsClassicMenuEnabled()
-        {
-            try
-            {
-                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32", false))
-                {
-                    if (key == null) return false;
-                    object v = key.GetValue("");
-                    return v != null && string.IsNullOrEmpty(v.ToString());
-                }
-            }
-            catch { return false; }
-        }
-
-        public static void SetClassicMenu(bool enable)
-        {
-            try
-            {
-                string keyPath = @"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}";
-                if (enable)
-                {
-                    using (RegistryKey key = Registry.CurrentUser.CreateSubKey(keyPath + "\\InprocServer32"))
-                    {
-                        if (key == null) throw new Exception("CreateSubKey failed");
-                        key.SetValue("", "");
-                    }
-                }
-                else
-                {
-                    using (RegistryKey key = Registry.CurrentUser.OpenSubKey(keyPath, true))
-                    {
-                        if (key != null) key.DeleteSubKeyTree("InprocServer32", false);
-                    }
-                }
-                RestartExplorer();
-                Log(I18nManager.T(enable ? "log_classic_menu_enabled" : "log_classic_menu_disabled"));
-            }
-            catch (Exception ex)
-            {
-                Log(I18nManager.T("log_classic_menu_fail", ex.Message));
-                MessageBox.Show(I18nManager.T("log_classic_menu_fail", ex.Message), I18nManager.T("dialog_tip"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-            finally
-            {
-                if (classicMenuMenuItem != null) classicMenuMenuItem.Checked = IsClassicMenuEnabled();
-            }
-        }
-
-        private static void RestartExplorer()
-        {
-            try
-            {
-                foreach (Process p in Process.GetProcessesByName("explorer"))
-                {
-                    try { p.Kill(); } catch { }
-                }
-                System.Threading.Thread.Sleep(800);
-                Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = true });
-                System.Threading.Thread.Sleep(2000);
-                if (trayIcon != null)
-                {
-                    trayIcon.Visible = false;
-                    trayIcon.Visible = true;
-                }
-            }
-            catch { }
-        }
-
-        private void ToggleClassicMenu(object sender, EventArgs e)
-        {
-            SetClassicMenu(!IsClassicMenuEnabled());
         }
 
         public static bool HandleSettingsApi(string rawPath, HttpListenerRequest request, HttpListenerResponse response)
