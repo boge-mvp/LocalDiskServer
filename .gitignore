@@ -7,7 +7,6 @@ obj/
 *.pdb
 
 # 运行时生成文件与配置
-*.ini
 *.log
 crash.txt
 crash_report_*.txt
