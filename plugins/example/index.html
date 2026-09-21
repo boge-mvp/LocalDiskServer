@@ -1,0 +1,55 @@
+<div class="plugin-example-page" style="padding: 24px; max-width: 960px; margin: 0 auto;">
+  <h2 style="margin: 0 0 8px 0;">🧩 示例插件</h2>
+  <p style="color: var(--text-secondary, #7f8c8d); margin: 0 0 24px 0;">
+    本页由独立子进程 backend.exe 渲染，通过字节帧协议与宿主通信，演示插件系统的全部能力。
+  </p>
+
+  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">
+    <div style="border: 1px solid var(--border-color, #ddd); border-radius: 8px; padding: 16px;">
+      <h3 style="margin: 0 0 8px 0; font-size: 1rem;">📡 存活探测</h3>
+      <p style="font-size: 0.85rem; color: var(--text-secondary, #888); margin: 0 0 12px 0;">GET /api/plugin/example/ping</p>
+      <button onclick="peCall('ping')" style="padding: 8px 14px; cursor: pointer;">ping</button>
+      <pre id="pe-out-ping" style="font-size: 0.78rem; background: var(--bg-secondary, #f6f8fa); padding: 10px; border-radius: 6px; overflow: auto; max-height: 180px; margin: 12px 0 0 0;">—</pre>
+    </div>
+
+    <div style="border: 1px solid var(--border-color, #ddd); border-radius: 8px; padding: 16px;">
+      <h3 style="margin: 0 0 8px 0; font-size: 1rem;">🚚 大负载（~2MB）</h3>
+      <p style="font-size: 0.85rem; color: var(--text-secondary, #888); margin: 0 0 12px 0;">GET /api/plugin/example/list — 10000 条记录经 BIN_CHUNK 帧下发</p>
+      <button onclick="peCall('list')" style="padding: 8px 14px; cursor: pointer;">下载列表</button>
+      <pre id="pe-out-list" style="font-size: 0.78rem; background: var(--bg-secondary, #f6f8fa); padding: 10px; border-radius: 6px; overflow: auto; max-height: 180px; margin: 12px 0 0 0;">—</pre>
+    </div>
+
+    <div style="border: 1px solid var(--border-color, #ddd); border-radius: 8px; padding: 16px;">
+      <h3 style="margin: 0 0 8px 0; font-size: 1rem;">🔁 后台异步任务</h3>
+      <p style="font-size: 0.85rem; color: var(--text-secondary, #888); margin: 0 0 12px 0;">启动模拟扫描，期间 ping 仍然并发可用</p>
+      <button onclick="peCall('scan', true)" style="padding: 8px 14px; cursor: pointer;">启动扫描</button>
+      <button onclick="peCall('scan-status')" style="padding: 8px 14px; cursor: pointer;">查询进度</button>
+      <pre id="pe-out-scan-status" style="font-size: 0.78rem; background: var(--bg-secondary, #f6f8fa); padding: 10px; border-radius: 6px; overflow: auto; max-height: 180px; margin: 12px 0 0 0;">—</pre>
+    </div>
+
+    <div style="border: 1px solid var(--border-color, #ddd); border-radius: 8px; padding: 16px;">
+      <h3 style="margin: 0 0 8px 0; font-size: 1rem;">💥 故障自愈</h3>
+      <p style="font-size: 0.85rem; color: var(--text-secondary, #888); margin: 0 0 12px 0;">crash 注入子进程自毁（宿主自动重拉）；hang 注入挂起（宿主超时击杀）</p>
+      <button onclick="peCall('crash')" style="padding: 8px 14px; cursor: pointer;">注入 crash</button>
+      <button onclick="peCall('hang')" style="padding: 8px 14px; cursor: pointer;">注入 hang</button>
+      <pre id="pe-out-crash" style="font-size: 0.78rem; background: var(--bg-secondary, #f6f8fa); padding: 10px; border-radius: 6px; overflow: auto; max-height: 180px; margin: 12px 0 0 0;">—</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+function peCall(name, post) {
+  var el = document.getElementById('pe-out-' + name);
+  if (el) el.textContent = '请求中...';
+  fetch('/api/plugin/example/' + name, { method: post ? 'POST' : 'GET' })
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      var el2 = document.getElementById('pe-out-' + name);
+      if (el2) el2.textContent = t.length > 400 ? ('[长度 ' + t.length + ' 字节] ' + t.substring(0, 400) + '...') : t;
+    })
+    .catch(function (e) {
+      var el3 = document.getElementById('pe-out-' + name);
+      if (el3) el3.textContent = '失败: ' + e;
+    });
+}
+</script>

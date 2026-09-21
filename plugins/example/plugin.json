@@ -1,0 +1,12 @@
+{
+  "id": "example",
+  "name": "示例插件",
+  "version": "1.0.0",
+  "author": "LocalDiskServer",
+  "description": "演示插件协议全部能力：页面/API/大负载/回显/异步任务/故障自愈",
+  "icon": "🧩",
+  "order": 100,
+  "timeout": 10,
+  "concurrency": 4,
+  "warmup": true
+}

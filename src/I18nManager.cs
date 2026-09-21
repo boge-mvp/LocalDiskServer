@@ -326,6 +326,8 @@ namespace LocalDiskServer
                     {
                         currentStrings[kvp.Key] = kvp.Value;
                     }
+                    // 重灌插件注册词条（语言切换后 currentStrings 已被清空重建）
+                    ApplyExternalStrings(langCode);
 
                     CurrentLanguageCode = dict.ContainsKey("language_code") ? dict["language_code"] : langCode;
                     CurrentLanguageName = dict.ContainsKey("language_name") ? dict["language_name"] : langCode;
@@ -461,6 +463,42 @@ namespace LocalDiskServer
             }
 
             return key;
+        }
+
+        // ── 插件词条注册: 按(语言, 前缀)独立存储，语言切换后自动重灌 ──
+        private static readonly Dictionary<string, Dictionary<string, string>> externalStrings = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+
+        public static void RegisterStrings(string langCode, Dictionary<string, string> entries, string keyPrefix)
+        {
+            if (string.IsNullOrEmpty(langCode) || entries == null || entries.Count == 0) return;
+            lock (((System.Collections.ICollection)externalStrings).SyncRoot)
+            {
+                Dictionary<string, string> store;
+                if (!externalStrings.TryGetValue(langCode, out store))
+                {
+                    store = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    externalStrings[langCode] = store;
+                }
+                foreach (KeyValuePair<string, string> kvp in entries)
+                {
+                    store[keyPrefix + kvp.Key] = kvp.Value;
+                }
+            }
+            // 注册语言即当前语言时立即生效
+            if (string.Equals(langCode, CurrentLanguageCode, StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyExternalStrings(langCode);
+            }
+        }
+
+        private static void ApplyExternalStrings(string langCode)
+        {
+            Dictionary<string, string> store;
+            if (!externalStrings.TryGetValue(langCode, out store)) return;
+            foreach (KeyValuePair<string, string> kvp in store)
+            {
+                currentStrings[kvp.Key] = kvp.Value;
+            }
         }
     }
 }

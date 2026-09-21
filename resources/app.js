@@ -1441,6 +1441,31 @@ function toggleDevEcosystem(event) {
     }
 }
 
+function togglePluginsGroup(event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    const children = document.getElementById('children-plugins');
+    if (children) {
+        const parentNode = children.parentElement;
+        const arrow = parentNode ? parentNode.querySelector('.tree-arrow') : null;
+        if (children.style.display === 'none') {
+            children.style.display = 'block';
+            if (arrow) {
+                arrow.classList.remove('collapsed');
+                arrow.innerText = '▼';
+            }
+        } else {
+            children.style.display = 'none';
+            if (arrow) {
+                arrow.classList.add('collapsed');
+                arrow.innerText = '▶';
+            }
+        }
+    }
+}
+
 function expandTreeNode(event, path) {
     if (event) {
         event.preventDefault();
@@ -2796,6 +2821,7 @@ function showSettingsModal() {
 
             modal.style.display = 'flex';
             loadAppCacheInfo();
+            loadSettingsPlugins();
         })
         .catch(err => {
             alert('Failed to load settings: ' + err.message);
@@ -2851,6 +2877,154 @@ function openAppCacheDir() {
         .then(res => res.json())
         .then(data => {
             if (!data.success) alert(data.message || 'Failed to open cache directory');
+        })
+        .catch(err => alert('Network error: ' + err.message));
+}
+
+function loadSettingsPlugins() {
+    const container = document.getElementById('settings-plugins-container');
+    if (!container) return;
+
+    fetch('/api/plugins/list')
+        .then(res => res.json())
+        .then(data => {
+            if (data && data.success === false) {
+                container.innerHTML = `<div style='color: var(--danger, #e74c3c); padding: 10px; text-align: center;'>${escapeHtml(data.message || data.error || 'Error')}</div>`;
+                return;
+            }
+
+            const list = Array.isArray(data) ? data : ((data && data.plugins) ? data.plugins : []);
+            if (list.length === 0) {
+                container.innerHTML = `<div style='text-align: center; color: var(--text-muted); padding: 15px; font-size: 0.9rem;'>${window.t('settings_plugin_empty') || 'No plugins found'}</div>`;
+                return;
+            }
+
+            let html = '';
+            list.forEach(p => {
+                const isEnabled = p.enabled;
+                const statusBadge = isEnabled
+                    ? `<span class='plugin-status-badge status-active'>${window.t('settings_plugin_status_enabled') || 'Enabled'}</span>`
+                    : `<span class='plugin-status-badge status-disabled'>${window.t('settings_plugin_status_disabled') || 'Disabled'}</span>`;
+                
+                const entryBtn = isEnabled
+                    ? `<a href='/plugin/${encodeURIComponent(p.id)}' target='_blank' class='settings-btn-sub' style='text-decoration: none; padding: 2px 8px; font-size: 0.8rem; display: inline-flex; align-items: center;'>${window.t('settings_plugin_entry_link') || 'Open'} ↗</a>`
+                    : '';
+
+                html += `
+                <div class='settings-plugin-card' data-id='${escapeHtml(p.id)}' style='display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 6px;'>
+                    <div style='display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1;'>
+                        <div style='font-size: 1.5rem; line-height: 1;'>${escapeHtml(p.icon || '🧩')}</div>
+                        <div style='min-width: 0; flex: 1;'>
+                            <div style='display: flex; align-items: center; gap: 6px; flex-wrap: wrap;'>
+                                <span style='font-weight: 600; font-size: 0.95rem; color: var(--text-color);'>${escapeHtml(p.name)}</span>
+                                <span style='font-size: 0.75rem; color: var(--text-muted); background: var(--container-bg); border: 1px solid var(--border-color); border-radius: 4px; padding: 1px 5px;'>v${escapeHtml(p.version)}</span>
+                                ${statusBadge}
+                            </div>
+                            <div style='font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' title='${escapeHtml(p.description)}'>
+                                ${escapeHtml(p.description || '')}
+                            </div>
+                        </div>
+                    </div>
+                    <div style='display: flex; align-items: center; gap: 8px; margin-left: 12px; flex-shrink: 0;'>
+                        ${entryBtn}
+                        <label class='switch' title='${isEnabled ? (window.t('settings_plugin_status_enabled') || 'Enabled') : (window.t('settings_plugin_status_disabled') || 'Disabled')}' style='margin: 0;'>
+                            <input type='checkbox' ${isEnabled ? 'checked' : ''} onchange='togglePlugin("${escapeHtml(p.id)}", this.checked)'>
+                            <span class='slider round'></span>
+                        </label>
+                        <button type='button' class='settings-btn-op' onclick='uninstallPlugin("${escapeHtml(p.id)}", "${escapeHtml(p.name)}")' style='color: #e74c3c; border-color: rgba(231,76,60,0.3); padding: 3px 8px; font-size: 0.8rem;' title='${window.t('settings_plugin_uninstall') || 'Uninstall'}'>🗑️</button>
+                    </div>
+                </div>`;
+            });
+
+            container.innerHTML = html;
+        })
+        .catch(err => {
+            container.innerHTML = `<div style='color: var(--danger, #e74c3c); padding: 10px; text-align: center;'>Network error: ${escapeHtml(err.message)}</div>`;
+        });
+}
+
+function refreshPluginsList() {
+    const container = document.getElementById('settings-plugins-container');
+    if (container) container.innerHTML = `<div style='text-align: center; color: var(--text-muted); padding: 15px;'>Loading...</div>`;
+    fetch('/api/plugins/refresh', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            loadSettingsPlugins();
+        })
+        .catch(err => {
+            alert('Failed to refresh: ' + err.message);
+            loadSettingsPlugins();
+        });
+}
+
+function togglePlugin(id, enable) {
+    fetch('/api/plugins/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: id, enabled: enable, enable: enable })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (!data.success) {
+            alert(data.message || 'Failed to toggle plugin');
+        }
+        loadSettingsPlugins();
+    })
+    .catch(err => {
+        alert('Network error: ' + err.message);
+        loadSettingsPlugins();
+    });
+}
+
+function toggleAllPlugins(enable) {
+    fetch('/api/plugins/toggle-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: enable, enable: enable })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (!data.success) {
+            alert(data.message || 'Failed to toggle plugins');
+        }
+        loadSettingsPlugins();
+    })
+    .catch(err => {
+        alert('Network error: ' + err.message);
+        loadSettingsPlugins();
+    });
+}
+
+function uninstallPlugin(id, name) {
+    const confirmMsg = (window.t('settings_plugin_uninstall_confirm') || 'Are you sure to uninstall {0}?')
+        .replace('{0}', name)
+        .replace('{1}', id);
+
+    if (confirm(confirmMsg)) {
+        fetch('/api/plugins/uninstall', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: id })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) {
+                alert(data.message || 'Failed to uninstall plugin');
+            }
+            loadSettingsPlugins();
+        })
+        .catch(err => {
+            alert('Network error: ' + err.message);
+            loadSettingsPlugins();
+        });
+    }
+}
+
+function openPluginsFolder() {
+    fetch('/api/plugins/open-dir', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) alert(data.message || 'Failed to open plugins directory');
         })
         .catch(err => alert('Network error: ' + err.message));
 }

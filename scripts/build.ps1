@@ -110,3 +110,37 @@ if ($process.ExitCode -eq 0 -and (Test-Path $outputExe)) {
     Write-Host "==========================================" -ForegroundColor Red
     exit $process.ExitCode
 }
+
+# ── 插件编译段: 遍历 plugins/*/backend.cs，用同一 csc 编出 backend.exe 并同步到 dist/plugins/ ──
+$pluginsDir = Join-Path $rootDir "plugins"
+if (Test-Path $pluginsDir) {
+    # 终止运行中的插件后端进程（防止文件占用）
+    Get-Process -Name "backend" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$pluginsDir*" } | Stop-Process -Force
+    Get-Process -Name "backend" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$distDir*" } | Stop-Process -Force
+
+    $built = 0
+    Get-ChildItem -Path $pluginsDir -Directory | ForEach-Object {
+        $pluginDir = $_.FullName
+        $backendCs = Join-Path $pluginDir "backend.cs"
+        if (Test-Path $backendCs) {
+            $pluginOut = Join-Path $pluginDir "backend.exe"
+            Write-Host ""
+            Write-Host "[plugin] 编译 $($_.Name)..." -ForegroundColor Cyan
+            $pluginArgs = @("/target:exe", "/optimize+", "/utf8output", "/out:`"$pluginOut`"", "/r:System.dll", "/r:System.Core.dll", "/r:System.Web.dll", "`"$backendCs`"")
+            $pp = Start-Process -FilePath $cscPath -ArgumentList $pluginArgs -NoNewWindow -Wait -PassThru
+            if ($pp.ExitCode -ne 0 -or -not (Test-Path $pluginOut)) {
+                Write-Host " [×] 插件 $($_.Name) 编译失败，退出代码: $($pp.ExitCode)" -ForegroundColor Red
+                exit 1
+            }
+            $built++
+        }
+    }
+
+    # 同步 plugins/ → dist/plugins/（运行时从 exe 同目录加载）
+    $distPlugins = Join-Path $distDir "plugins"
+    if (Test-Path $distPlugins) { Remove-Item -Recurse -Force $distPlugins }
+    Copy-Item -Path $pluginsDir -Destination $distPlugins -Recurse -Force
+    if ($built -gt 0) {
+        Write-Host " [√] 已编译 $built 个插件并同步到 dist/plugins/" -ForegroundColor Green
+    }
+}

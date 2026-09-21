@@ -57,10 +57,14 @@ try {
     Write-Host "==========================================" -ForegroundColor Green
     Write-Host " [√] 项目内测试端口验证全部通过！" -ForegroundColor Green
     Write-Host "==========================================" -ForegroundColor Green
+
+    # 5. 生命周期绑定：实例保持运行，用户输入任意字符后执行关闭流程
+    Write-Host "[4/4] 测试实例保持运行中: $testUrl (PID $($proc.Id))" -ForegroundColor Cyan
+    Read-Host ">>> 输入任意内容并回车，即可停止实例并清理环境"
 }
 finally {
-    # 5. 测试完成，干净终止测试实例并清理测试配置
-    Write-Host "[4/4] 正在关闭测试实例并清理环境..." -ForegroundColor Gray
+    # 6. 生命周期结束：终止测试实例并清理测试配置（回车或 Ctrl+C 均会执行）
+    Write-Host "[清理] 正在关闭测试实例并清理环境..." -ForegroundColor Gray
     if ($proc -and -not $proc.HasExited) {
         $proc | Stop-Process -Force
         Start-Sleep -Milliseconds 300
@@ -69,5 +73,5 @@ finally {
     if (Test-Path $testConfig) {
         Remove-Item -Path $testConfig -Force -ErrorAction SilentlyContinue
     }
-    Write-Host "   - 测试实例已正常退出，测试环境已清理干净。" -ForegroundColor Gray
+    Write-Host "   - 测试实例已停止，测试环境已清理干净。" -ForegroundColor Gray
 }

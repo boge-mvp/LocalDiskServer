@@ -101,9 +101,11 @@ namespace LocalDiskServer
         public static int last_bound_https_port = 1235;
         public static string language = "";
 
+        public static MenuItem openPluginDirMenuItem;
         public static string configFile = "server_config.ini";
         public static string textExtensionsStr = "txt,md,log,ini,conf,cfg,json,js,css,xml,bat,sh,py,java,cs,go,rs,cpp,h,c,properties,yaml,yml,sql,ts";
         public static string favoritesStr = "";
+        public static string disabledPluginsStr = "";
 
         // 命令行控制与测试模式变量
         public static bool isTestMode = false;
@@ -215,6 +217,9 @@ namespace LocalDiskServer
                 PnpmExplorer.TriggerPnpmScanAsync();
                 MavenExplorer.TriggerMavenScanAsync();
             }
+
+            // 加载插件系统（扫描 exe 同目录 plugins/，独立子进程隔离）
+            PluginHost.Initialize();
         }
 
         public static void Log(string msg)
@@ -340,6 +345,10 @@ namespace LocalDiskServer
                         {
                             favoritesStr = line.Substring(10).Trim();
                         }
+                        else if (line.StartsWith("disabled_plugins=", StringComparison.OrdinalIgnoreCase))
+                        {
+                            disabledPluginsStr = line.Substring(17).Trim();
+                        }
                         else if (line.StartsWith("language=", StringComparison.OrdinalIgnoreCase))
                         {
                             language = line.Substring(9).Trim();
@@ -402,6 +411,7 @@ namespace LocalDiskServer
                 sb.AppendLine("last_bound_https_port=" + last_bound_https_port);
                 sb.AppendLine("text_extensions=" + textExtensionsStr);
                 sb.AppendLine("favorites=" + favoritesStr);
+                sb.AppendLine("disabled_plugins=" + (disabledPluginsStr ?? ""));
                 sb.AppendLine("language=" + (language ?? ""));
                 sb.AppendLine("enable_dev_ecosystem=" + enable_dev_ecosystem);
                 File.WriteAllText(configPath, sb.ToString());
@@ -411,6 +421,61 @@ namespace LocalDiskServer
             {
                 MessageBox.Show(I18nManager.T("dialog_save_config_fail", ex.Message), I18nManager.T("dialog_warning"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
+        }
+
+        public static bool IsPluginDisabled(string pluginId)
+        {
+            if (string.IsNullOrEmpty(pluginId) || string.IsNullOrEmpty(disabledPluginsStr)) return false;
+            string[] items = disabledPluginsStr.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (string item in items)
+            {
+                if (string.Equals(item.Trim(), pluginId.Trim(), StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
+        public static void SetPluginDisabled(string pluginId, bool disabled)
+        {
+            if (string.IsNullOrEmpty(pluginId)) return;
+            List<string> list = new List<string>();
+            if (!string.IsNullOrEmpty(disabledPluginsStr))
+            {
+                string[] items = disabledPluginsStr.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (string item in items)
+                {
+                    string t = item.Trim();
+                    if (!string.IsNullOrEmpty(t))
+                    {
+                        bool exists = false;
+                        foreach (string existing in list)
+                        {
+                            if (string.Equals(existing, t, StringComparison.OrdinalIgnoreCase)) { exists = true; break; }
+                        }
+                        if (!exists) list.Add(t);
+                    }
+                }
+            }
+            if (disabled)
+            {
+                bool found = false;
+                foreach (string item in list)
+                {
+                    if (string.Equals(item, pluginId, StringComparison.OrdinalIgnoreCase)) { found = true; break; }
+                }
+                if (!found) list.Add(pluginId);
+            }
+            else
+            {
+                for (int i = list.Count - 1; i >= 0; i--)
+                {
+                    if (string.Equals(list[i], pluginId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        list.RemoveAt(i);
+                    }
+                }
+            }
+            disabledPluginsStr = string.Join(",", list.ToArray());
+            SaveConfigStatic();
         }
 
         private void InitTrayIcon()
@@ -430,12 +495,14 @@ namespace LocalDiskServer
             openHomeMenuItem = new MenuItem(I18nManager.T("menu_open_home"), OpenBrowser);
             openConfigFileMenuItem = new MenuItem(I18nManager.T("menu_open_config"), OpenConfigFile);
             openAppDirMenuItem = new MenuItem(I18nManager.T("menu_open_app_dir"), OpenAppDirectory);
+            openPluginDirMenuItem = new MenuItem(I18nManager.T("menu_open_plugin_dir"), OpenPluginDirectory);
             viewLogsMenuItem = new MenuItem(I18nManager.T("menu_view_logs"), OpenLogs);
             configTextExtMenuItem = new MenuItem(I18nManager.T("menu_config_text_ext"), ChangeTextExtensions);
 
             trayMenu.MenuItems.Add(openHomeMenuItem);
             trayMenu.MenuItems.Add(openConfigFileMenuItem);
             trayMenu.MenuItems.Add(openAppDirMenuItem);
+            trayMenu.MenuItems.Add(openPluginDirMenuItem);
             trayMenu.MenuItems.Add(viewLogsMenuItem);
             trayMenu.MenuItems.Add(configTextExtMenuItem);
 
@@ -547,6 +614,7 @@ namespace LocalDiskServer
             if (openHomeMenuItem != null) openHomeMenuItem.Text = I18nManager.T("menu_open_home");
             if (openConfigFileMenuItem != null) openConfigFileMenuItem.Text = I18nManager.T("menu_open_config");
             if (openAppDirMenuItem != null) openAppDirMenuItem.Text = I18nManager.T("menu_open_app_dir");
+            if (openPluginDirMenuItem != null) openPluginDirMenuItem.Text = I18nManager.T("menu_open_plugin_dir");
             if (viewLogsMenuItem != null) viewLogsMenuItem.Text = I18nManager.T("menu_view_logs");
             if (configTextExtMenuItem != null) configTextExtMenuItem.Text = I18nManager.T("menu_config_text_ext");
             if (plainPortMenuItem != null) plainPortMenuItem.Text = I18nManager.T("menu_config_plain_port", port);
@@ -1003,6 +1071,7 @@ namespace LocalDiskServer
                 sb.AppendFormat("\"use_https\":{0},", use_https ? "true" : "false");
                 sb.AppendFormat("\"enable_dev_ecosystem\":{0},", enable_dev_ecosystem ? "true" : "false");
                 sb.AppendFormat("\"text_extensions\":\"{0}\",", HttpServer.EscapeJson(textExtensionsStr ?? ""));
+                sb.AppendFormat("\"disabled_plugins\":\"{0}\",", HttpServer.EscapeJson(disabledPluginsStr ?? ""));
                 sb.AppendFormat("\"language\":\"{0}\",", HttpServer.EscapeJson(language ?? ""));
                 sb.AppendFormat("\"startup_enabled\":{0},", IsStartupEnabledStatic() ? "true" : "false");
                 
@@ -1168,6 +1237,7 @@ namespace LocalDiskServer
                     if (jsonPairs.ContainsKey("text_extensions")) newTextExt = jsonPairs["text_extensions"];
                     if (jsonPairs.ContainsKey("language")) newLang = jsonPairs["language"];
                     if (jsonPairs.ContainsKey("startup_enabled")) bool.TryParse(jsonPairs["startup_enabled"], out newStartup);
+                    if (jsonPairs.ContainsKey("disabled_plugins")) disabledPluginsStr = jsonPairs["disabled_plugins"];
 
                     if (newPort < 1 || newPort > 65535) newPort = port;
                     if (newHttpsPort < 1 || newHttpsPort > 65535) newHttpsPort = https_port;
@@ -1310,9 +1380,15 @@ namespace LocalDiskServer
             }
         }
 
+        private void OpenPluginDirectory(object sender, EventArgs e)
+        {
+            PluginHost.OpenPluginsDirectory();
+        }
+
         private void Exit(object sender, EventArgs e)
         {
             HttpServer.StopServer();
+            PluginHost.ShutdownAll();
             if (trayIcon != null)
             {
                 trayIcon.Visible = false;

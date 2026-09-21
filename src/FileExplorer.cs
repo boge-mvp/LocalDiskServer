@@ -456,6 +456,21 @@ namespace LocalDiskServer
                 sb.Append("    </div>");
             }
 
+            // 6. Plugin Nodes (独立模块，不受开发者生态开关限制，只要有可用插件即展示)
+            string pluginNavNodes = PluginHost.GetNavNodesHtml(activePath);
+            if (pluginNavNodes.Length > 0)
+            {
+                sb.Append("    <div class='tree-node root-node' style='margin-top: 10px; border-top: 1px solid var(--border-color); padding-top: 8px;'>");
+                sb.Append("      <div class='tree-row'>");
+                sb.Append("        <span class='tree-arrow' onclick='togglePluginsGroup(event)'>▼</span>");
+                sb.AppendFormat("        <span class='tree-label' style='font-weight: bold; cursor: pointer;' onclick='togglePluginsGroup(event)'>🧩 {0}</span>", I18nManager.T("plugin_nav_group"));
+                sb.Append("      </div>");
+                sb.Append("      <div class='tree-children' id='children-plugins'>");
+                sb.Append(pluginNavNodes);
+                sb.Append("      </div>");
+                sb.Append("    </div>");
+            }
+
             sb.Append("  </div>"); // end tree-container
 
             // 6. Sidebar Footer: Settings & Logs & Version
@@ -528,6 +543,7 @@ namespace LocalDiskServer
                 }
             }
             sb.Append("      </div>");
+            sb.Append("      <script>var b=document.getElementById('breadcrumbs-bar');if(b){b.scrollLeft=b.scrollWidth;}window.addEventListener('load',function(){var c=document.getElementById('breadcrumbs-bar');if(c){c.scrollLeft=c.scrollWidth;}});</script>");
             sb.Append("      <input type='text' id='address-input' style='display: none;' onkeydown='handleAddressKey(event)' onblur='deactivateAddressInput()'>");
             sb.Append("    </div>");
             sb.AppendFormat("    <button id='protocol-switch-btn' onclick='toggleProtocol(event)' class='btn-back' style='height: 32px; padding: 0 10px; margin-left: 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px; flex-shrink: 0;' title='{0}'></button>", I18nManager.T("lobby_proto_toggle_title"));

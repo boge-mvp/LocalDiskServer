@@ -4,10 +4,13 @@
 $ErrorActionPreference = "Stop"
 
 $rootDir = Split-Path -Parent $PSScriptRoot
-$distExe = Join-Path $rootDir "dist\LocalDiskServer.exe"
+$distDir = Join-Path $rootDir "dist"
+$distExe = Join-Path $distDir "LocalDiskServer.exe"
+$distPlugins = Join-Path $distDir "plugins"
 $buildScript = Join-Path $rootDir "scripts\build.ps1"
 $targetDir = "D:\apps\portable-apps\LocalDiskServer"
 $targetExe = Join-Path $targetDir "LocalDiskServer.exe"
+$targetPluginsDir = Join-Path $targetDir "plugins"
 
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "   LocalDiskServer 部署与无缝重启流程      " -ForegroundColor Cyan
@@ -34,7 +37,7 @@ if (-not (Test-Path $targetDir)) {
     Write-Host "   - 目标目录已存在。" -ForegroundColor Gray
 }
 
-# 3. 部署前：安全终止所有运行中的 LocalDiskServer 实例，释放文件句柄
+# 3. 部署前：安全终止所有运行中的 LocalDiskServer 实例及插件进程，释放文件句柄
 $runningProcesses = Get-Process -Name "LocalDiskServer" -ErrorAction SilentlyContinue
 if ($runningProcesses) {
     Write-Host "[3/5] 检测到正在运行的 LocalDiskServer 实例 (共 $($runningProcesses.Count) 个)，正在安全关闭..." -ForegroundColor Yellow
@@ -44,9 +47,73 @@ if ($runningProcesses) {
     Write-Host "[3/5] 无正在运行的旧实例，无需关闭。" -ForegroundColor Green
 }
 
-# 4. 复制覆盖运行文件至便携目录
+$runningBackends = Get-Process -Name "backend" -ErrorAction SilentlyContinue | Where-Object {
+    $_.Path -and ($_.Path.StartsWith($targetDir, [System.StringComparison]::OrdinalIgnoreCase) -or $_.Path.StartsWith($distDir, [System.StringComparison]::OrdinalIgnoreCase))
+}
+if ($runningBackends) {
+    Write-Host "   - 检测到目标目录下的旧插件后端进程，正在终止..." -ForegroundColor Yellow
+    $runningBackends | Stop-Process -Force
+    Start-Sleep -Milliseconds 500
+}
+
+# 4. 复制覆盖运行文件与插件至便携目录（严格保护本地已有配置文件）
 Write-Host "[4/5] 正在发布最新文件至便携目录..." -ForegroundColor Green
 Copy-Item -Path $distExe -Destination $targetExe -Force
+
+# 主程序配置文件安全保护：若便携目录已存在 server_config.ini，坚决不覆盖！
+$distConfig = Join-Path $distDir "server_config.ini"
+$targetConfig = Join-Path $targetDir "server_config.ini"
+if (Test-Path $targetConfig) {
+    Write-Host "   - [安全保护] 检测到本地主配置文件 server_config.ini 已存在，严格保留，跳过覆盖！" -ForegroundColor Green
+} elseif (Test-Path $distConfig) {
+    Write-Host "   - 初始化部署本地主配置文件 server_config.ini..." -ForegroundColor Gray
+    Copy-Item -Path $distConfig -Destination $targetConfig
+}
+
+# 插件目录安全增量同步函数：保护用户已有的配置文件与运行时数据
+function Sync-PluginDirectorySafely([string]$sourceDir, [string]$destDir) {
+    if (-not (Test-Path $destDir)) {
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    }
+
+    $configExtensions = @(".ini", ".cfg", ".conf", ".db", ".sqlite", ".dat")
+    $configNames = @("config.json", "settings.json", "local_config.json")
+
+    Get-ChildItem -Path $sourceDir -Recurse | ForEach-Object {
+        $srcItem = $_
+        $relPath = $srcItem.FullName.Substring($sourceDir.Length).TrimStart('\', '/')
+        $targetItemPath = Join-Path $destDir $relPath
+
+        if ($srcItem.PSIsContainer) {
+            if (-not (Test-Path $targetItemPath)) {
+                New-Item -ItemType Directory -Path $targetItemPath -Force | Out-Null
+            }
+        } else {
+            $isConfigFile = $false
+            if ($configExtensions -contains $srcItem.Extension.ToLowerInvariant()) {
+                $isConfigFile = $true
+            }
+            if ($configNames -contains $srcItem.Name.ToLowerInvariant()) {
+                $isConfigFile = $true
+            }
+
+            if ($isConfigFile -and (Test-Path $targetItemPath)) {
+                Write-Host "     * [保护配置] 跳过覆盖插件配置文件: $relPath" -ForegroundColor DarkCyan
+            } else {
+                $targetParent = Split-Path -Parent $targetItemPath
+                if (-not (Test-Path $targetParent)) {
+                    New-Item -ItemType Directory -Path $targetParent -Force | Out-Null
+                }
+                Copy-Item -Path $srcItem.FullName -Destination $targetItemPath -Force
+            }
+        }
+    }
+}
+
+if (Test-Path $distPlugins) {
+    Write-Host "   - 正在智能同步插件目录至便携目录（自动保护本地配置文件）..." -ForegroundColor Cyan
+    Sync-PluginDirectorySafely $distPlugins $targetPluginsDir
+}
 
 if (Test-Path $targetExe) {
     $item = Get-Item $targetExe

@@ -104,6 +104,42 @@ Automated releases are powered by GitHub Actions. Whenever a new Git tag matchin
 
 ---
 
+## 🧩 插件系统
+
+每个插件是一个**独立子进程**（`backend.exe`），与主程序通过 stdin/stdout 上的字节帧协议通信：崩溃互不感染，Kill 即完整卸载，宿主退出时自动级联回收。
+
+### 目录约定
+
+```
+plugins/
+└── <plugin-id>/
+    ├── plugin.json   # 清单: id/name/version/icon/order/timeout/concurrency/warmup
+    ├── backend.cs    # 后端源码（build.ps1 自动用同一 csc 编译为 backend.exe）
+    ├── index.html    # 页面片段（主进程统一包裹全站 header/footer；后端不可用时降级直读）
+    ├── assets/       # 静态资源（主进程磁盘直读，防目录穿越）
+    └── lang/         # 插件自有词条 zh-CN.ini / en-US.ini（键自动加 plugin_<id>_ 前缀）
+```
+
+`./scripts/build.ps1` 会遍历 `plugins/*/backend.cs` 编译并同步到 `dist/plugins/`；参考实现见 `plugins/example/`。
+
+### 插件协议 v1（字节帧）
+
+帧格式：`[type(1B)][len(4B LE)][payload]`，单帧上限 16MB，断帧即杀进程重拉。
+
+| type | 方向 | 说明 |
+|---|---|---|
+| `0x01` HANDSHAKE_REQ | 主→子 | JSON：protocol/pluginDir/parentPid/language/端口/配置快照 |
+| `0x02` HANDSHAKE_ACK | 子→主 | JSON：protocol/plugin/version（版本不符拒载） |
+| `0x03` REQUEST_HEAD | 主→子 | JSON：id/method/path/query/headers/bodyLen |
+| `0x04` RESPONSE_HEAD | 子→主 | JSON：id/status/type/bodyLen |
+| `0x05` BIN_CHUNK | 双向 | `[id(4B LE)][raw bytes]` 上/下行 body 唯一通道（无 Base64） |
+| `0x06` EVENT | 子→主 | JSON：name/data（主动事件，预留 SSE） |
+| `0x07` FATAL | 子→主 | JSON：code/message（子进程自报后自杀） |
+
+控制语义（握手/请求头/响应头）用 JSON 字节——字段演进免协商、跨语言零成本；负载数据（上/下行 body）用原始字节——零膨胀零损耗（同 HTTP/2 HEADERS+DATA、LSP 的分层先例）。多路复用靠 `id`，每插件在飞请求上限 = `concurrency`（默认 4）；请求超时（默认 10s）Kill 重拉，连续 3 次失败标记不可用；宿主退出双保险（退出钩子 Kill 全部 + 子进程轮询父 PID 自杀）。日志走 stderr，自动加 `[plugin:id]` 前缀并入主日志。
+
+---
+
 ## 📄 License
 
 MIT License.

@@ -241,6 +241,12 @@ namespace LocalDiskServer
                     return;
                 }
 
+                // 插件页面路由: /plugin/<id> 与 /plugin/<id>/...
+                if (PluginHost.TryServePage(rawPath, request, response))
+                {
+                    return;
+                }
+
                 if (rawPath.StartsWith("api/", StringComparison.OrdinalIgnoreCase))
                 {
                     HandleApiRequest(rawPath, request, response);
@@ -320,6 +326,7 @@ namespace LocalDiskServer
                 if (MavenExplorer.HandleApi(rawPath, request, response)) return;
                 if (GradleExplorer.HandleApi(rawPath, request, response)) return;
                 if (FileExplorer.HandleApi(rawPath, request, response)) return;
+                if (PluginHost.HandleApi(rawPath, request, response)) return;
 
                 ServeError(response, 404, I18nManager.T("err_api_not_found", rawPath));
             }
@@ -463,6 +470,12 @@ namespace LocalDiskServer
             footerHtml = footerHtml.Replace("{SETTINGS_SEC_TEXT_EXT}", I18nManager.T("settings_sec_text_ext"));
             footerHtml = footerHtml.Replace("{SETTINGS_TEXT_EXT_DESC}", I18nManager.T("settings_text_ext_desc"));
             footerHtml = footerHtml.Replace("{DIALOG_TEXT_EXT_TOGGLE_FORMAT}", I18nManager.T("dialog_text_ext_toggle_format"));
+            footerHtml = footerHtml.Replace("{SETTINGS_SEC_PLUGINS}", I18nManager.T("settings_plugin_management"));
+            footerHtml = footerHtml.Replace("{SETTINGS_PLUGIN_DESC}", I18nManager.T("settings_plugin_management_desc"));
+            footerHtml = footerHtml.Replace("{SETTINGS_PLUGIN_BTN_OPEN_DIR}", I18nManager.T("settings_plugin_btn_open_dir"));
+            footerHtml = footerHtml.Replace("{SETTINGS_PLUGIN_BTN_REFRESH}", I18nManager.T("settings_plugin_btn_refresh"));
+            footerHtml = footerHtml.Replace("{SETTINGS_PLUGIN_BTN_ENABLE_ALL}", I18nManager.T("settings_plugin_btn_enable_all"));
+            footerHtml = footerHtml.Replace("{SETTINGS_PLUGIN_BTN_DISABLE_ALL}", I18nManager.T("settings_plugin_btn_disable_all"));
             footerHtml = footerHtml.Replace("{SETTINGS_SEC_SYSTEM_OPS}", I18nManager.T("settings_sec_system_ops"));
             footerHtml = footerHtml.Replace("{SETTINGS_BTN_OPEN_CONFIG}", I18nManager.T("settings_btn_open_config"));
             footerHtml = footerHtml.Replace("{SETTINGS_BTN_OPEN_APP_DIR}", I18nManager.T("settings_btn_open_app_dir"));
@@ -818,6 +831,18 @@ namespace LocalDiskServer
 
                 sb.Append("</div>");
             }
+
+            // Section 2.5: Installed Plugins (independent of dev ecosystem)
+            string pluginsLobbyHtml = PluginHost.GetLobbyCardsHtml();
+            if (!string.IsNullOrEmpty(pluginsLobbyHtml))
+            {
+                sb.Append("<hr style='border: 0; border-top: 1px solid var(--border-color); margin: 16px 0;'>");
+                sb.AppendFormat("<h2>🧩 {0}</h2>", I18nManager.T("nav_plugins"));
+                sb.Append("<div class='grid'>");
+                sb.Append(pluginsLobbyHtml);
+                sb.Append("</div>");
+            }
+
             sb.Append("<hr style='border: 0; border-top: 1px solid var(--border-color); margin: 16px 0;'>");
 
             // Section 3: Physical Drives

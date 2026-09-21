@@ -220,10 +220,16 @@ a:hover {
     align-items: center;
     gap: 4px;
     min-width: 0;
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
     white-space: nowrap;
     flex: 1;
     height: 100%;
+}
+.breadcrumbs::-webkit-scrollbar {
+    display: none;
 }
 .breadcrumbs a {
     color: var(--accent-color);
@@ -861,6 +867,16 @@ tr.item-row.selected {
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     word-break: break-all;
+}
+
+/* Icon views: center file size as a whole (number + unit) */
+#file-table.view-large tr.item-row td:nth-child(5),
+#file-table.view-medium tr.item-row td:nth-child(5) {
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    width: 100% !important;
+    text-align: center !important;
 }
 
 /* Views for homepage grids */
@@ -2199,5 +2215,74 @@ body.resizing-col #file-table {
     font-size: 0.72rem;
     word-break: break-all;
 }
+
+/* Plugin Management in Settings */
+.settings-plugin-card {
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.settings-plugin-card:hover {
+    border-color: var(--accent-color) !important;
+}
+.plugin-status-badge {
+    font-size: 0.72rem;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 500;
+}
+.plugin-status-badge.status-active {
+    background: rgba(46, 204, 113, 0.15);
+    color: #27ae60;
+    border: 1px solid rgba(46, 204, 113, 0.3);
+}
+.plugin-status-badge.status-disabled {
+    background: rgba(149, 165, 166, 0.15);
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+}
+
+/* Modern Toggle Switch Component */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 38px;
+    height: 20px;
+}
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--border-color);
+    transition: .25s ease;
+    border-radius: 20px;
+}
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .25s ease;
+    border-radius: 50%;
+}
+.switch input:checked + .slider {
+    background-color: #2ecc71;
+}
+.switch input:focus + .slider {
+    box-shadow: 0 0 1px #2ecc71;
+}
+.switch input:checked + .slider:before {
+    transform: translateX(18px);
+}
+
 
 
