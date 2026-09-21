@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -6,10 +6,24 @@ using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Web.Script.Serialization;
 using System.Xml;
 
-namespace LocalDiskServer
+internal static class MavenBackend
 {
+    private const int PROTOCOL_VERSION = 1;
+    private const byte T_HANDSHAKE_REQ = 0x01;
+    private const byte T_HANDSHAKE_ACK = 0x02;
+    private const byte T_REQUEST_HEAD = 0x03;
+    private const byte T_RESPONSE_HEAD = 0x04;
+    private const byte T_BIN_CHUNK = 0x05;
+    private const int CHUNK = 64 * 1024;
+
+    private static readonly JavaScriptSerializer json = new JavaScriptSerializer();
+    private static Dictionary<string, object> hostContext;
+    private static string currentLanguage = "zh-CN";
+    private static readonly Dictionary<string, string> i18nStrings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
     public class MavenArtifactItem
     {
         public string GroupId { get; set; }
@@ -23,14 +37,10 @@ namespace LocalDiskServer
         public bool HasJavadoc { get; set; }
         public int DepCount { get; set; }
         public Dictionary<string, string> Dependencies { get; set; }
-
-        // KMP (Kotlin Multiplatform) 支持
         public bool IsKmp { get; set; }
         public List<string> KmpPlatforms { get; set; }
         public string Description { get; set; }
         public string License { get; set; }
-
-        // POM 解析状态
         public bool ParseFailed { get; set; }
         public string FailReason { get; set; }
 
@@ -75,8 +85,217 @@ namespace LocalDiskServer
         }
     }
 
-    public static class MavenExplorer
+    private static int Main()
     {
+        int parentPid = -1;
+        try { parentPid = Convert.ToInt32(Environment.GetEnvironmentVariable("LDS_PARENT_PID")); } catch { }
+        if (parentPid > 0)
+        {
+            Thread watchdog = new Thread(delegate()
+            {
+                while (true)
+                {
+                    Thread.Sleep(3000);
+                    try { Process.GetProcessById(parentPid); } catch { Environment.Exit(0); }
+                }
+            });
+            watchdog.IsBackground = true;
+            watchdog.Start();
+        }
+
+        Stream stdin = Console.OpenStandardInput();
+        Stream stdout = Console.OpenStandardOutput();
+
+        // 启动时后台自动扫描
+        TriggerMavenScanAsync();
+
+        try
+        {
+            while (true)
+            {
+                byte type;
+                byte[] payload;
+                ReadFrame(stdin, out type, out payload);
+
+                if (type == T_HANDSHAKE_REQ)
+                {
+                    hostContext = json.DeserializeObject(Encoding.UTF8.GetString(payload)) as Dictionary<string, object>;
+                    if (hostContext != null)
+                    {
+                        if (hostContext.ContainsKey("parentPid"))
+                        {
+                            parentPid = Convert.ToInt32(hostContext["parentPid"]);
+                        }
+                        if (hostContext.ContainsKey("language") && hostContext["language"] != null)
+                        {
+                            currentLanguage = Convert.ToString(hostContext["language"]);
+                        }
+                    }
+                    LoadLanguage(currentLanguage);
+                    Dictionary<string, object> ack = new Dictionary<string, object>();
+                    ack["protocol"] = PROTOCOL_VERSION;
+                    ack["plugin"] = "maven";
+                    ack["version"] = "1.0.0";
+                    WriteFrame(stdout, T_HANDSHAKE_ACK, Encoding.UTF8.GetBytes(json.Serialize(ack)));
+                    Log("Maven 插件握手完成");
+                }
+                else if (type == T_REQUEST_HEAD)
+                {
+                    HandleRequest(stdin, stdout, payload);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log("Maven 插件致命异常退出: " + ex.Message);
+            return 1;
+        }
+    }
+
+    private static void LoadLanguage(string lang)
+    {
+        try
+        {
+            string langFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "lang\\" + lang + ".ini");
+            if (!File.Exists(langFile))
+            {
+                langFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "lang\\zh-CN.ini");
+            }
+            if (File.Exists(langFile))
+            {
+                string[] lines = File.ReadAllLines(langFile, Encoding.UTF8);
+                lock (i18nStrings)
+                {
+                    i18nStrings.Clear();
+                    foreach (string l in lines)
+                    {
+                        string t = l.Trim();
+                        if (string.IsNullOrEmpty(t) || t.StartsWith("#") || t.StartsWith(";")) continue;
+                        int eq = t.IndexOf('=');
+                        if (eq > 0)
+                        {
+                            string k = t.Substring(0, eq).Trim();
+                            string v = t.Substring(eq + 1).Trim();
+                            i18nStrings[k] = v.Replace("\\n", "\n").Replace("\\t", "\t");
+                        }
+                    }
+                }
+            }
+        }
+        catch { }
+    }
+
+    private static string T(string key, params object[] args)
+    {
+        string val;
+        lock (i18nStrings)
+        {
+            if (!i18nStrings.TryGetValue(key, out val)) val = key;
+        }
+        if (args != null && args.Length > 0)
+        {
+            try { return string.Format(val, args); } catch { return val; }
+        }
+        return val;
+    }
+
+    private static string EscapeJson(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n").Replace("\t", "\\t");
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes <= 0) return "0 B";
+        string[] units = new string[] { "B", "KB", "MB", "GB", "TB" };
+        int i = 0;
+        double d = bytes;
+        while (d >= 1024 && i < units.Length - 1)
+        {
+            d /= 1024;
+            i++;
+        }
+        return string.Format("{0:0.##} {1}", d, units[i]);
+    }
+
+    private static void Log(string msg)
+    {
+        Console.Error.WriteLine("[maven] " + msg);
+    }
+        private static void DetectJavaRuntime(out string javaHome, out string javaVersion, out string javaPath)
+        {
+            javaHome = Environment.GetEnvironmentVariable("JAVA_HOME") ?? "";
+            javaVersion = "";
+            javaPath = "";
+
+            if (!string.IsNullOrEmpty(javaHome) && Directory.Exists(javaHome))
+            {
+                string exe = Path.Combine(javaHome, "bin", "java.exe");
+                if (File.Exists(exe)) javaPath = exe;
+            }
+
+            if (string.IsNullOrEmpty(javaPath))
+            {
+                try
+                {
+                    string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+                    string[] paths = pathEnv.Split(Path.PathSeparator);
+                    foreach (string p in paths)
+                    {
+                        if (string.IsNullOrEmpty(p)) continue;
+                        string candidate = Path.Combine(p.Trim('\"', ' '), "java.exe");
+                        if (File.Exists(candidate))
+                        {
+                            javaPath = candidate;
+                            if (string.IsNullOrEmpty(javaHome))
+                            {
+                                string binDir = Path.GetDirectoryName(candidate);
+                                if (!string.IsNullOrEmpty(binDir))
+                                {
+                                    javaHome = Path.GetDirectoryName(binDir) ?? "";
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            if (!string.IsNullOrEmpty(javaPath) && File.Exists(javaPath))
+            {
+                try
+                {
+                    ProcessStartInfo psi = new ProcessStartInfo
+                    {
+                        FileName = javaPath,
+                        Arguments = "-version",
+                        RedirectStandardError = true,
+                        RedirectStandardOutput = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    using (var p = Process.Start(psi))
+                    {
+                        string err = p.StandardError.ReadToEnd();
+                        string outStr = p.StandardOutput.ReadToEnd();
+                        p.WaitForExit(3000);
+                        string output = !string.IsNullOrEmpty(err) ? err : outStr;
+                        if (!string.IsNullOrEmpty(output))
+                        {
+                            string[] lines = output.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                            if (lines.Length > 0)
+                            {
+                                javaVersion = lines[0].Trim();
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+
         private static readonly object mavenScanLock = new object();
         private static bool isScanning = false;
         private static MavenScanResult cachedResult = null;
@@ -107,12 +326,12 @@ namespace LocalDiskServer
                 cachedRepoTicks = 0;
                 GC.Collect();
             }
-            Logger.Log(I18nManager.T("log_dev_ecosystem_released"));
+            Log(T("log_dev_ecosystem_released"));
         }
 
         public static void TriggerMavenScanAsync(bool forceRescan = false)
         {
-            if (!ServerApplicationContext.enable_dev_ecosystem) return;
+            if (!true) return;
 
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -139,13 +358,13 @@ namespace LocalDiskServer
                         {
                             if (curRepoTicks == sRepo)
                             {
-                                Logger.Log(I18nManager.T("log_dev_ecosystem_verified"));
+                                Log(T("log_dev_ecosystem_verified"));
                                 return;
                             }
                         }
                     }
 
-                    Logger.Log(I18nManager.T("log_maven_scan_started"));
+                    Log(T("log_maven_scan_started"));
                     MavenScanResult res = DoMavenScan(repoRoot);
 
                     lock (mavenScanLock)
@@ -155,11 +374,11 @@ namespace LocalDiskServer
                     }
 
                     SaveToDiskCache(curRepoTicks);
-                    Logger.Log(I18nManager.T("log_maven_scan_finished", res.Artifacts.Count, FormatSize(res.TotalSize)));
+                    Log(T("log_maven_scan_finished", res.Artifacts.Count, FormatSize(res.TotalSize)));
                 }
                 catch (Exception ex)
                 {
-                    Logger.Log("Maven scan error: " + ex.Message);
+                    Log("Maven scan error: " + ex.Message);
                 }
                 finally
                 {
@@ -240,7 +459,7 @@ namespace LocalDiskServer
 
             // 探测 Java Runtime
             string jHome, jVer, jPath;
-            GradleExplorer.DetectJavaRuntime(out jHome, out jVer, out jPath);
+            DetectJavaRuntime(out jHome, out jVer, out jPath);
             res.JavaHome = jHome;
             res.JavaVersion = jVer;
 
@@ -290,7 +509,7 @@ namespace LocalDiskServer
             }
             catch (Exception ex)
             {
-                Logger.Log("ScanRepository error: " + ex.Message);
+                Log("ScanRepository error: " + ex.Message);
             }
         }
 
@@ -423,7 +642,7 @@ namespace LocalDiskServer
                     }
                     catch (Exception ex)
                     {
-                        Logger.Log("POM parse warning for " + pomFile + ": " + ex.Message);
+                        Log("POM parse warning for " + pomFile + ": " + ex.Message);
                         item.ParseFailed = true;
                         item.FailReason = "pom_parse_error: " + ex.Message;
                     }
@@ -742,7 +961,7 @@ namespace LocalDiskServer
             }
             catch (Exception ex)
             {
-                Logger.Log("ParsePomDependencies error for " + pomPath + ": " + ex.Message);
+                Log("ParsePomDependencies error for " + pomPath + ": " + ex.Message);
             }
             return deps;
         }
@@ -802,7 +1021,7 @@ namespace LocalDiskServer
             }
             catch (Exception ex)
             {
-                Logger.Log("ParsePomDependenciesEnhanced error: " + ex.Message);
+                Log("ParsePomDependenciesEnhanced error: " + ex.Message);
             }
             return deps;
         }
@@ -974,7 +1193,7 @@ namespace LocalDiskServer
                 }
 
                 File.WriteAllText(cacheFile, sb.ToString(), Encoding.UTF8);
-                Logger.Log(I18nManager.T("log_dev_ecosystem_saved", cacheFile));
+                Log(T("log_dev_ecosystem_saved", cacheFile));
             }
             catch { }
         }
@@ -1077,7 +1296,7 @@ namespace LocalDiskServer
                 }
 
                 sw.Stop();
-                Logger.Log(I18nManager.T("log_dev_ecosystem_fast_loaded", "Maven", res.Artifacts.Count, sw.ElapsedMilliseconds));
+                Log(T("log_dev_ecosystem_fast_loaded", "Maven", res.Artifacts.Count, sw.ElapsedMilliseconds));
                 return true;
             }
             catch
@@ -1095,450 +1314,7 @@ namespace LocalDiskServer
 
         #region HTTP Handlers
 
-        public static void ServeMavenDashboard(HttpListenerResponse response)
-        {
-            if (!ServerApplicationContext.enable_dev_ecosystem)
-            {
-                response.Redirect("/");
-                response.OutputStream.Close();
-                return;
-            }
 
-            if (cachedResult == null && !isScanning)
-            {
-                TriggerMavenScanAsync();
-            }
-
-            string template = HttpServer.LoadResource("maven.html");
-            if (string.IsNullOrEmpty(template))
-            {
-                HttpServer.ServeError(response, 500, I18nManager.T("err_internal", "maven.html not found"));
-                return;
-            }
-
-            string activePath = "/maven";
-
-            StringBuilder sb = new StringBuilder();
-            sb.Append(HttpServer.GetHtmlHeader(I18nManager.T("maven_page_title"), activePath, "layout-explorer"));
-            sb.Append("<script>const currentView = 'maven';</script>");
-            sb.Append(FileExplorer.RenderSidebar(activePath, I18nManager.CurrentLanguage));
-
-            // i18n 占位符替换
-            template = template.Replace("{MAVEN_BREADCRUMB}", I18nManager.T("maven_breadcrumb"));
-            template = template.Replace("{MAVEN_PAGE_TITLE}", I18nManager.T("maven_page_title"));
-            template = template.Replace("{LOBBY_PROTO_TOGGLE_TITLE}", I18nManager.T("lobby_proto_toggle_title"));
-            template = template.Replace("{MAVEN_SEARCH_PLACEHOLDER}", I18nManager.T("maven_search_placeholder"));
-            template = template.Replace("{MAVEN_BTN_RESCAN}", I18nManager.T("maven_btn_rescan"));
-            template = template.Replace("{MAVEN_SEC_REPO}", I18nManager.T("maven_sec_repo"));
-            template = template.Replace("{MAVEN_STAT_ARTIFACTS}", I18nManager.T("maven_stat_artifacts"));
-            template = template.Replace("{MAVEN_STAT_SIZE}", I18nManager.T("maven_stat_size"));
-            template = template.Replace("{MAVEN_STAT_PATH}", I18nManager.T("maven_stat_path"));
-            template = template.Replace("{MAVEN_BTN_CONFIG_DETAILS}", I18nManager.T("maven_btn_config_details"));
-            template = template.Replace("{MAVEN_BTN_OPEN_REPO}", I18nManager.T("maven_btn_open_repo"));
-            template = template.Replace("{MAVEN_BTN_CLEAN_INVALID}", I18nManager.T("maven_btn_clean_invalid"));
-            template = template.Replace("{MAVEN_BTN_FAILED}", I18nManager.T("maven_btn_failed"));
-            template = template.Replace("{MAVEN_FAILED_HINT}", I18nManager.T("maven_failed_hint"));
-            template = template.Replace("{MAVEN_FAILED_MODAL_TITLE}", I18nManager.T("maven_failed_modal_title"));
-            template = template.Replace("{MAVEN_SELECT_ALL}", I18nManager.T("maven_select_all"));
-            template = template.Replace("{MAVEN_BATCH_RETRY}", I18nManager.T("maven_batch_retry"));
-            template = template.Replace("{MAVEN_BATCH_DELETE}", I18nManager.T("maven_batch_delete"));
-            template = template.Replace("{MAVEN_ITEM_FILES_TITLE}", I18nManager.T("maven_item_files_title"));
-            template = template.Replace("{MAVEN_TH_GROUPID}", I18nManager.T("maven_th_groupid"));
-            template = template.Replace("{MAVEN_TH_ARTIFACTID}", I18nManager.T("maven_th_artifactid"));
-            template = template.Replace("{MAVEN_TH_VERSION}", I18nManager.T("maven_th_version"));
-            template = template.Replace("{MAVEN_TH_PACKAGING}", I18nManager.T("maven_th_packaging"));
-            template = template.Replace("{MAVEN_TH_SIZE}", I18nManager.T("npm_th_size"));
-            template = template.Replace("{MAVEN_DETAIL_TITLE}", I18nManager.T("maven_detail_title"));
-            template = template.Replace("{MAVEN_DETAIL_EMPTY}", I18nManager.T("maven_detail_empty"));
-            template = template.Replace("{MAVEN_LOADING}", I18nManager.T("maven_loading"));
-            template = template.Replace("{PREVIEW_BTN_EXPAND}", I18nManager.T("preview_btn_expand"));
-            template = template.Replace("{PREVIEW_BTN_COLLAPSE}", I18nManager.T("preview_btn_collapse"));
-            template = template.Replace("{MODAL_BTN_OK}", I18nManager.T("modal_btn_ok"));
-            template = template.Replace("{MAVEN_MODAL_CONFIG_TITLE}", I18nManager.T("maven_modal_config_title"));
-            template = template.Replace("{MAVEN_CFG_SEC_RUNTIME}", I18nManager.T("maven_cfg_sec_runtime"));
-            template = template.Replace("{MAVEN_CFG_SEC_REPO}", I18nManager.T("maven_cfg_sec_repo"));
-            template = template.Replace("{MAVEN_CFG_SEC_SETTINGS}", I18nManager.T("maven_cfg_sec_settings"));
-            template = template.Replace("{PAGE_SIZE_LABEL}", I18nManager.T("pagination_page_size"));
-            template = template.Replace("{PAGE_FIRST}", I18nManager.T("pagination_first"));
-            template = template.Replace("{PAGE_PREV}", I18nManager.T("pagination_prev"));
-            template = template.Replace("{PAGE_NEXT}", I18nManager.T("pagination_next"));
-            template = template.Replace("{PAGE_LAST}", I18nManager.T("pagination_last"));
-
-            sb.Append(template);
-            sb.Append(HttpServer.GetHtmlFooter());
-
-            byte[] buffer = Encoding.UTF8.GetBytes(sb.ToString());
-            response.ContentType = "text/html; charset=utf-8";
-            response.ContentLength64 = buffer.Length;
-            response.OutputStream.Write(buffer, 0, buffer.Length);
-            response.OutputStream.Close();
-        }
-
-        public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpListenerResponse response)
-        {
-            if (!rawPath.StartsWith("api/maven/", StringComparison.OrdinalIgnoreCase)) return false;
-
-            if (!ServerApplicationContext.enable_dev_ecosystem)
-            {
-                HttpServer.ServeJson(response, 403, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("err_dev_ecosystem_disabled")) + "\"}");
-                return true;
-            }
-
-            string subPath = rawPath.Substring(10).ToLower();
-
-            if (subPath == "data")
-            {
-                MavenScanResult res;
-                lock (mavenScanLock)
-                {
-                    res = cachedResult;
-                }
-
-                if (res == null)
-                {
-                    HttpServer.ServeJson(response, 200, "{\"scanning\":" + (isScanning ? "true" : "false") + ",\"artifacts\":[],\"totalArtifacts\":0,\"totalSize\":0,\"localRepoPath\":\"\",\"settingsPath\":\"\",\"mavenVersion\":\"\",\"javaVersion\":\"\"}");
-                    return true;
-                }
-
-                StringBuilder sb = new StringBuilder();
-                sb.Append("{\"scanning\":").Append(isScanning ? "true" : "false");
-                sb.Append(",\"totalArtifacts\":").Append(res.TotalArtifacts);
-                sb.Append(",\"totalSize\":").Append(res.TotalSize);
-                sb.Append(",\"localRepoPath\":\"").Append(HttpServer.EscapeJson(res.LocalRepoPath)).Append("\"");
-                sb.Append(",\"settingsPath\":\"").Append(HttpServer.EscapeJson(res.SettingsPath)).Append("\"");
-                sb.Append(",\"mavenVersion\":\"").Append(HttpServer.EscapeJson(res.MavenVersion)).Append("\"");
-                sb.Append(",\"mavenPath\":\"").Append(HttpServer.EscapeJson(res.MavenPath)).Append("\"");
-                sb.Append(",\"javaVersion\":\"").Append(HttpServer.EscapeJson(res.JavaVersion)).Append("\"");
-                sb.Append(",\"javaHome\":\"").Append(HttpServer.EscapeJson(res.JavaHome)).Append("\"");
-
-                sb.Append(",\"artifacts\":[");
-                for (int i = 0; i < res.Artifacts.Count; i++)
-                {
-                    if (i > 0) sb.Append(",");
-                    MavenArtifactItem a = res.Artifacts[i];
-                    sb.Append("{");
-                    sb.Append("\"groupId\":\"").Append(HttpServer.EscapeJson(a.GroupId)).Append("\"");
-                    sb.Append(",\"artifactId\":\"").Append(HttpServer.EscapeJson(a.ArtifactId)).Append("\"");
-                    sb.Append(",\"version\":\"").Append(HttpServer.EscapeJson(a.Version)).Append("\"");
-                    sb.Append(",\"packaging\":\"").Append(HttpServer.EscapeJson(a.Packaging)).Append("\"");
-                    sb.Append(",\"size\":").Append(a.Size);
-                    sb.Append(",\"lastModified\":\"").Append(HttpServer.EscapeJson(a.LastModified.ToString("yyyy-MM-dd HH:mm"))).Append("\"");
-                    sb.Append(",\"localPath\":\"").Append(HttpServer.EscapeJson(a.LocalPath)).Append("\"");
-                    sb.Append(",\"hasSources\":").Append(a.HasSources ? "true" : "false");
-                    sb.Append(",\"hasJavadoc\":").Append(a.HasJavadoc ? "true" : "false");
-                    sb.Append(",\"depCount\":").Append(a.DepCount);
-                    sb.Append(",\"parseFailed\":").Append(a.ParseFailed ? "true" : "false");
-                    sb.Append(",\"failReason\":\"").Append(HttpServer.EscapeJson(a.FailReason ?? "")).Append("\"");
-                    sb.Append(",\"description\":\"").Append(HttpServer.EscapeJson(a.Description ?? "")).Append("\"");
-                    sb.Append(",\"license\":\"").Append(HttpServer.EscapeJson(a.License ?? "")).Append("\"");
-                    sb.Append(",\"isKmp\":").Append(a.IsKmp ? "true" : "false");
-                    sb.Append(",\"kmpPlatforms\":[");
-                    for (int k = 0; k < a.KmpPlatforms.Count; k++)
-                    {
-                        if (k > 0) sb.Append(",");
-                        sb.Append("\"").Append(HttpServer.EscapeJson(a.KmpPlatforms[k])).Append("\"");
-                    }
-                    sb.Append("]");
-                    sb.Append(",\"dependencies\":{");
-                    int dc = 0;
-                    foreach (var d in a.Dependencies)
-                    {
-                        if (dc++ > 0) sb.Append(",");
-                        sb.Append("\"").Append(HttpServer.EscapeJson(d.Key)).Append("\":\"").Append(HttpServer.EscapeJson(d.Value ?? "")).Append("\"");
-                    }
-                    sb.Append("}");
-                    sb.Append("}");
-                }
-                sb.Append("]}");
-
-                HttpServer.ServeJson(response, 200, sb.ToString());
-                return true;
-            }
-            else if (subPath == "search")
-            {
-                string q = request.QueryString["q"] ?? "";
-                q = q.ToLower();
-
-                List<MavenArtifactItem> matches = new List<MavenArtifactItem>();
-                lock (mavenScanLock)
-                {
-                    if (cachedResult != null)
-                    {
-                        foreach (var a in cachedResult.Artifacts)
-                        {
-                            if (string.IsNullOrEmpty(q) ||
-                                a.GroupId.ToLower().Contains(q) ||
-                                a.ArtifactId.ToLower().Contains(q) ||
-                                a.Version.ToLower().Contains(q))
-                            {
-                                matches.Add(a);
-                            }
-                        }
-                    }
-                }
-
-                StringBuilder sb = new StringBuilder();
-                sb.Append("[");
-                for (int i = 0; i < matches.Count; i++)
-                {
-                    if (i > 0) sb.Append(",");
-                    var a = matches[i];
-                    sb.Append("{\"groupId\":\"").Append(HttpServer.EscapeJson(a.GroupId)).Append("\"");
-                    sb.Append(",\"artifactId\":\"").Append(HttpServer.EscapeJson(a.ArtifactId)).Append("\"");
-                    sb.Append(",\"version\":\"").Append(HttpServer.EscapeJson(a.Version)).Append("\"");
-                    sb.Append(",\"packaging\":\"").Append(HttpServer.EscapeJson(a.Packaging)).Append("\"");
-                    sb.Append(",\"size\":").Append(a.Size);
-                    sb.Append(",\"hasSources\":").Append(a.HasSources ? "true" : "false");
-                    sb.Append(",\"hasJavadoc\":").Append(a.HasJavadoc ? "true" : "false");
-                    sb.Append(",\"depCount\":").Append(a.DepCount);
-                    sb.Append(",\"localPath\":\"").Append(HttpServer.EscapeJson(a.LocalPath)).Append("\"");
-                    sb.Append("}");
-                }
-                sb.Append("]");
-                HttpServer.ServeJson(response, 200, "{\"success\":true,\"results\":" + sb.ToString() + ",\"total\":" + matches.Count + "}");
-                return true;
-            }
-            else if (subPath == "refresh")
-            {
-                TriggerMavenScanAsync(true);
-                HttpServer.ServeJson(response, 200, "{\"success\":true,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_gradle_scan_started")) + "\"}");
-                return true;
-            }
-            else if (subPath == "open-path")
-            {
-                string path = request.QueryString["path"];
-                if (string.IsNullOrEmpty(path))
-                {
-                    HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_missing_path")) + "\"}");
-                    return true;
-                }
-                if (Directory.Exists(path) || File.Exists(path))
-                {
-                    try
-                    {
-                        Process.Start("explorer.exe", Directory.Exists(path) ? path : ("/select,\"" + path + "\""));
-                        Logger.Log(I18nManager.T("log_locate_in_explorer", path));
-                        HttpServer.ServeJson(response, 200, "{\"success\":true}");
-                    }
-                    catch (Exception ex)
-                    {
-                        HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(ex.Message) + "\"}");
-                    }
-                }
-                else
-                {
-                    HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_path_not_found")) + "\"}");
-                }
-                return true;
-            }
-            else if (subPath == "terminal")
-            {
-                string path = request.QueryString["path"];
-                if (string.IsNullOrEmpty(path))
-                {
-                    HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_missing_path")) + "\"}");
-                    return true;
-                }
-                string targetDir = Directory.Exists(path) ? path : Path.GetDirectoryName(path);
-                if (!string.IsNullOrEmpty(targetDir) && Directory.Exists(targetDir))
-                {
-                    try
-                    {
-                        ProcessStartInfo psi = new ProcessStartInfo
-                        {
-                            FileName = "powershell.exe",
-                            WorkingDirectory = targetDir,
-                            UseShellExecute = true
-                        };
-                        Process.Start(psi);
-                        Logger.Log(I18nManager.T("log_open_terminal", "PowerShell", targetDir));
-                        HttpServer.ServeJson(response, 200, "{\"success\":true}");
-                    }
-                    catch (Exception ex)
-                    {
-                        HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(ex.Message) + "\"}");
-                    }
-                }
-                else
-                {
-                    HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_path_not_found")) + "\"}");
-                }
-                return true;
-            }
-            else if (subPath == "pom")
-            {
-                string path = request.QueryString["path"];
-                if (string.IsNullOrEmpty(path))
-                {
-                    HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_missing_path")) + "\"}");
-                    return true;
-                }
-                // 尝试多种 POM 文件名模式
-                string[] candidates = new string[]
-                {
-                    Path.Combine(path, "pom.xml"),
-                    path.EndsWith(".pom") ? path : ""
-                };
-
-                foreach (string candidate in candidates)
-                {
-                    if (string.IsNullOrEmpty(candidate)) continue;
-                    if (File.Exists(candidate))
-                    {
-                        try
-                        {
-                            string content = File.ReadAllText(candidate, Encoding.UTF8);
-                            HttpServer.ServeJson(response, 200, "{\"success\":true,\"content\":\"" + HttpServer.EscapeJson(content) + "\"}");
-                            return true;
-                        }
-                        catch (Exception ex)
-                        {
-                            HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(ex.Message) + "\"}");
-                            return true;
-                        }
-                    }
-                }
-
-                // 在 versionDir 下查找任意 .pom 文件
-                if (Directory.Exists(path))
-                {
-                    try
-                    {
-                        string[] pomFiles = Directory.GetFiles(path, "*.pom");
-                        if (pomFiles.Length > 0 && File.Exists(pomFiles[0]))
-                        {
-                            string content = File.ReadAllText(pomFiles[0], Encoding.UTF8);
-                            HttpServer.ServeJson(response, 200, "{\"success\":true,\"content\":\"" + HttpServer.EscapeJson(content) + "\"}");
-                            return true;
-                        }
-                    }
-                    catch { }
-                }
-
-                HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_file_not_found")) + "\"}");
-                return true;
-            }
-            else if (subPath == "clean-invalid" && request.HttpMethod == "POST")
-            {
-                string body;
-                using (StreamReader reader = new StreamReader(request.InputStream, Encoding.UTF8))
-                {
-                    body = reader.ReadToEnd();
-                }
-                List<string> paths = ExtractStringArrayFromJson(body);
-                EnsureMavenCacheLoaded();
-                int cleaned = CleanInvalidByPaths(paths);
-                HttpServer.ServeJson(response, 200, "{\"success\":true,\"cleaned\":" + cleaned + ",\"message\":\"Cleaned " + cleaned + " invalid directories.\"}");
-                return true;
-            }
-            else if (subPath == "clean-preview" && request.HttpMethod == "GET")
-            {
-                EnsureMavenCacheLoaded();
-                StringBuilder pb = new StringBuilder();
-                int pcount = 0;
-                lock (mavenScanLock)
-                {
-                    if (cachedResult != null)
-                    {
-                        foreach (var a in cachedResult.Artifacts)
-                        {
-                            string rt;
-                            if (!IsInvalidArtifact(a, out rt)) continue;
-                            if (pcount > 0) pb.Append(",");
-                            pb.Append("{\"path\":\"").Append(HttpServer.EscapeJson(a.LocalPath))
-                              .Append("\",\"coord\":\"").Append(HttpServer.EscapeJson(a.GroupId + ":" + a.ArtifactId + ":v" + a.Version))
-                              .Append("\",\"size\":").Append(a.Size)
-                              .Append(",\"reason\":\"").Append(rt).Append("\"}");
-                            pcount++;
-                        }
-                    }
-                }
-                HttpServer.ServeJson(response, 200, "{\"success\":true,\"count\":" + pcount + ",\"items\":[" + pb.ToString() + "]}");
-                return true;
-            }
-            else if (subPath == "retry-items" && request.HttpMethod == "POST")
-            {
-                string body;
-                using (StreamReader reader = new StreamReader(request.InputStream, Encoding.UTF8))
-                {
-                    body = reader.ReadToEnd();
-                }
-                List<string> paths = ExtractStringArrayFromJson(body);
-                EnsureMavenCacheLoaded();
-                int retried = RetryParseItems(paths);
-                Logger.Log(I18nManager.T("log_maven_retry_done", retried));
-                HttpServer.ServeJson(response, 200, "{\"success\":true,\"retried\":" + retried + ",\"message\":\"Retried " + retried + " artifacts.\"}");
-                return true;
-            }
-            else if (subPath == "delete-items" && request.HttpMethod == "POST")
-            {
-                string body;
-                using (StreamReader reader = new StreamReader(request.InputStream, Encoding.UTF8))
-                {
-                    body = reader.ReadToEnd();
-                }
-                List<string> paths = ExtractStringArrayFromJson(body);
-                EnsureMavenCacheLoaded();
-                int deleted = DeleteArtifactsByPaths(paths);
-                Logger.Log(I18nManager.T("log_maven_delete_done", deleted));
-                HttpServer.ServeJson(response, 200, "{\"success\":true,\"deleted\":" + deleted + ",\"message\":\"Deleted " + deleted + " artifacts.\"}");
-                return true;
-            }
-            else if (subPath == "item-files" && request.HttpMethod == "GET")
-            {
-                string path = request.QueryString["path"];
-                if (string.IsNullOrEmpty(path) || !IsPathUnderRoot(path, GetDefaultMavenLocalRepo()))
-                {
-                    HttpServer.ServeJson(response, 403, "{\"success\":false,\"message\":\"Path outside repository root.\"}");
-                    return true;
-                }
-                if (!Directory.Exists(path))
-                {
-                    HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"Directory not found.\"}");
-                    return true;
-                }
-
-                StringBuilder fb = new StringBuilder();
-                int count = 0;
-                try
-                {
-                    foreach (string dir in Directory.GetDirectories(path))
-                    {
-                        if (count > 0) fb.Append(",");
-                        fb.Append("{\"name\":\"").Append(HttpServer.EscapeJson("[dir] " + Path.GetFileName(dir))).Append("\",\"size\":0}");
-                        count++;
-                    }
-                    foreach (string file in Directory.GetFiles(path))
-                    {
-                        if (count > 0) fb.Append(",");
-                        FileInfo fi = new FileInfo(file);
-                        fb.Append("{\"name\":\"").Append(HttpServer.EscapeJson(fi.Name)).Append("\",\"size\":").Append(fi.Length).Append("}");
-                        count++;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(ex.Message) + "\"}");
-                    return true;
-                }
-
-                HttpServer.ServeJson(response, 200, "{\"success\":true,\"path\":\"" + HttpServer.EscapeJson(path) + "\",\"count\":" + count + ",\"files\":[" + fb.ToString() + "]}");
-                return true;
-            }
-            else if (subPath == "kmp-variants" && request.HttpMethod == "GET")
-            {
-                string path = request.QueryString["path"];
-                if (string.IsNullOrEmpty(path) || !IsPathUnderRoot(path, GetDefaultMavenLocalRepo()))
-                {
-                    HttpServer.ServeJson(response, 403, "{\"success\":false,\"message\":\"Path outside repository root.\"}");
-                    return true;
-                }
-                HandleGetKmpVariants(path, response);
-                return true;
-            }
-
-            return false;
-        }
 
         /// <summary>
         /// 从简单 JSON 字符串数组中提取元素（无需完整 JSON 反序列化）
@@ -1615,7 +1391,7 @@ namespace LocalDiskServer
             if (retried > 0)
             {
                 SaveToDiskCache(cachedRepoTicks);
-                Logger.Log(I18nManager.T("log_dev_ecosystem_verified"));
+                Log(T("log_dev_ecosystem_verified"));
             }
             return retried;
         }
@@ -1626,99 +1402,6 @@ namespace LocalDiskServer
         /// 再对每个声明变体做磁盘存在性判定（已下载取目录内文件总大小）。
         /// 纯本地离线推断，不发起网络请求。
         /// </summary>
-        private static void HandleGetKmpVariants(string path, HttpListenerResponse response)
-        {
-            try
-            {
-                DirectoryInfo vDir = new DirectoryInfo(path);
-                if (vDir == null || vDir.Parent == null || !Directory.Exists(path))
-                {
-                    HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"Directory not found.\"}");
-                    return;
-                }
-                DirectoryInfo rootAidDir = vDir.Parent;
-                string rootAid = rootAidDir.Name;
-                string version = vDir.Name;
-                string repoRoot = GetDefaultMavenLocalRepo();
-
-                // 1. 定位根模块 Gradle Module 元数据（优先 {rootAid}-{version}.module）
-                string moduleFile = null;
-                try
-                {
-                    string primary = Path.Combine(path, rootAid + "-" + version + ".module");
-                    if (File.Exists(primary))
-                    {
-                        moduleFile = primary;
-                    }
-                    else
-                    {
-                        foreach (string f in Directory.GetFiles(path, "*.module"))
-                        {
-                            if (new FileInfo(f).Length < 5 * 1024 * 1024) { moduleFile = f; break; }
-                        }
-                    }
-                }
-                catch { }
-
-                // 2. 计算组相对路径（repoRoot 之下的 group 段，不含 artifactId 目录本身）
-                string groupRel = "";
-                try
-                {
-                    DirectoryInfo groupDir = rootAidDir.Parent;
-                    if (groupDir != null)
-                    {
-                        string dirFull = groupDir.FullName.TrimEnd('\\');
-                        string rootTrim = repoRoot.TrimEnd('\\');
-                        if (dirFull.Length > rootTrim.Length + 1)
-                        {
-                            groupRel = dirFull.Substring(rootTrim.Length + 1);
-                        }
-                    }
-                }
-                catch { }
-
-                StringBuilder ib = new StringBuilder();
-                int icount = 0;
-                if (!string.IsNullOrEmpty(moduleFile) && groupRel != "")
-                {
-                    string text = "";
-                    using (StreamReader sr = new StreamReader(moduleFile, Encoding.UTF8)) text = sr.ReadToEnd();
-                    if (text.Length > 5 * 1024 * 1024) text = "";
-                    string lower = text.ToLowerInvariant();
-                    string aidLower = rootAid.ToLowerInvariant();
-
-                    foreach (string[] tk in KmpPlatformTokens)
-                    {
-                        if (!lower.Contains(aidLower + "-" + tk[0])) continue;
-
-                        string candidatePath = Path.Combine(repoRoot, groupRel, rootAid + "-" + tk[0], version);
-                        bool downloaded = Directory.Exists(candidatePath);
-                        long size = 0;
-                        if (downloaded)
-                        {
-                            try
-                            {
-                                foreach (string f in Directory.GetFiles(candidatePath)) size += new FileInfo(f).Length;
-                            }
-                            catch { }
-                        }
-
-                        if (icount > 0) ib.Append(",");
-                        ib.Append("{\"name\":\"").Append(HttpServer.EscapeJson(tk[1]))
-                          .Append("\",\"downloaded\":").Append(downloaded ? "true" : "false")
-                          .Append(",\"size\":").Append(size)
-                          .Append(",\"localPath\":\"").Append(HttpServer.EscapeJson(downloaded ? candidatePath : "")).Append("\"}");
-                        icount++;
-                    }
-                }
-
-                HttpServer.ServeJson(response, 200, "{\"success\":true,\"root\":\"" + HttpServer.EscapeJson(rootAid) + "\",\"items\":[" + ib.ToString() + "]}");
-            }
-            catch (Exception ex)
-            {
-                HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(ex.Message) + "\"}");
-            }
-        }
 
         /// <summary>
         /// 无效缓存判定：
@@ -1775,7 +1458,7 @@ namespace LocalDiskServer
                         try { Directory.Delete(a.LocalPath, true); }
                         catch (Exception ex)
                         {
-                            Logger.Log("Clean invalid failed [" + a.LocalPath + "]: " + ex.Message);
+                            Log("Clean invalid failed [" + a.LocalPath + "]: " + ex.Message);
                             removed = false;
                         }
                     }
@@ -1805,7 +1488,7 @@ namespace LocalDiskServer
                 long sTicks;
                 if (TryLoadFromDiskCache(out sTicks))
                 {
-                    Logger.Log("[Maven] 变更接口兜底同步载入缓存快照成功");
+                    Log("[Maven] 变更接口兜底同步载入缓存快照成功");
                 }
             }
         }
@@ -1845,18 +1528,521 @@ namespace LocalDiskServer
                     }
                     catch (Exception ex)
                     {
-                        Logger.Log("Delete artifact failed [" + a.LocalPath + "]: " + ex.Message);
+                        Log("Delete artifact failed [" + a.LocalPath + "]: " + ex.Message);
                     }
                 }
             }
             if (deleted > 0)
             {
                 SaveToDiskCache(cachedRepoTicks);
-                Logger.Log(I18nManager.T("log_dev_ecosystem_verified"));
+                Log(T("log_dev_ecosystem_verified"));
             }
             return deleted;
         }
 
         #endregion
+
+    private static void HandleRequest(Stream stdin, Stream stdout, byte[] payload)
+    {
+        Dictionary<string, object> head = json.DeserializeObject(Encoding.UTF8.GetString(payload)) as Dictionary<string, object>;
+        int id = Convert.ToInt32(head["id"]);
+        string method = Convert.ToString(head["method"]);
+        string path = head.ContainsKey("path") ? Convert.ToString(head["path"]) : "";
+        long bodyLen = head.ContainsKey("bodyLen") ? Convert.ToInt64(head["bodyLen"]) : 0;
+
+        Dictionary<string, string> query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (head.ContainsKey("query") && head["query"] is Dictionary<string, object>)
+        {
+            foreach (var kvp in (Dictionary<string, object>)head["query"])
+            {
+                query[kvp.Key] = Convert.ToString(kvp.Value);
+            }
+        }
+
+        byte[] body = new byte[0];
+        if (bodyLen > 0)
+        {
+            using (MemoryStream ms = new MemoryStream())
+            {
+                long received = 0;
+                while (received < bodyLen)
+                {
+                    byte t;
+                    byte[] chunkPayload;
+                    ReadFrame(stdin, out t, out chunkPayload);
+                    if (t != T_BIN_CHUNK || chunkPayload.Length < 4) continue;
+                    int chunkId = chunkPayload[0] | (chunkPayload[1] << 8) | (chunkPayload[2] << 16) | (chunkPayload[3] << 24);
+                    if (chunkId != id) continue;
+                    ms.Write(chunkPayload, 4, chunkPayload.Length - 4);
+                    received += chunkPayload.Length - 4;
+                }
+                body = ms.ToArray();
+            }
+        }
+
+        int status = 200;
+        string contentType = "application/json; charset=utf-8";
+        byte[] respBody = null;
+
+        try
+        {
+            if (path.Length == 0)
+            {
+                // 主页面输出
+                contentType = "text/html; charset=utf-8";
+                string htmlPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "index.html");
+                string template = File.ReadAllText(htmlPath, Encoding.UTF8);
+
+                template = template.Replace("{MAVEN_BREADCRUMB}", T("maven_breadcrumb"));
+                template = template.Replace("{MAVEN_PAGE_TITLE}", T("maven_page_title"));
+                template = template.Replace("{LOBBY_PROTO_TOGGLE_TITLE}", T("lobby_proto_toggle_title"));
+                template = template.Replace("{MAVEN_SEARCH_PLACEHOLDER}", T("maven_search_placeholder"));
+                template = template.Replace("{MAVEN_BTN_RESCAN}", T("maven_btn_rescan"));
+                template = template.Replace("{MAVEN_SEC_REPO}", T("maven_sec_repo"));
+                template = template.Replace("{MAVEN_STAT_ARTIFACTS}", T("maven_stat_artifacts"));
+                template = template.Replace("{MAVEN_STAT_SIZE}", T("maven_stat_size"));
+                template = template.Replace("{MAVEN_STAT_PATH}", T("maven_stat_path"));
+                template = template.Replace("{MAVEN_BTN_CONFIG_DETAILS}", T("maven_btn_config_details"));
+                template = template.Replace("{MAVEN_BTN_OPEN_REPO}", T("maven_btn_open_repo"));
+                template = template.Replace("{MAVEN_BTN_CLEAN_INVALID}", T("maven_btn_clean_invalid"));
+                template = template.Replace("{MAVEN_BTN_FAILED}", T("maven_btn_failed"));
+                template = template.Replace("{MAVEN_FAILED_HINT}", T("maven_failed_hint"));
+                template = template.Replace("{MAVEN_FAILED_MODAL_TITLE}", T("maven_failed_modal_title"));
+                template = template.Replace("{MAVEN_SELECT_ALL}", T("maven_select_all"));
+                template = template.Replace("{MAVEN_BATCH_RETRY}", T("maven_batch_retry"));
+                template = template.Replace("{MAVEN_BATCH_DELETE}", T("maven_batch_delete"));
+                template = template.Replace("{MAVEN_ITEM_FILES_TITLE}", T("maven_item_files_title"));
+                template = template.Replace("{MAVEN_TH_GROUPID}", T("maven_th_groupid"));
+                template = template.Replace("{MAVEN_TH_ARTIFACTID}", T("maven_th_artifactid"));
+                template = template.Replace("{MAVEN_TH_VERSION}", T("maven_th_version"));
+                template = template.Replace("{MAVEN_TH_PACKAGING}", T("maven_th_packaging"));
+                template = template.Replace("{MAVEN_TH_SIZE}", T("npm_th_size"));
+                template = template.Replace("{MAVEN_DETAIL_TITLE}", T("maven_detail_title"));
+                template = template.Replace("{MAVEN_DETAIL_EMPTY}", T("maven_detail_empty"));
+                template = template.Replace("{MAVEN_LOADING}", T("maven_loading"));
+                template = template.Replace("{PREVIEW_BTN_EXPAND}", T("preview_btn_expand"));
+                template = template.Replace("{PREVIEW_BTN_COLLAPSE}", T("preview_btn_collapse"));
+                template = template.Replace("{MODAL_BTN_OK}", T("modal_btn_ok"));
+                template = template.Replace("{MAVEN_MODAL_CONFIG_TITLE}", T("maven_modal_config_title"));
+                template = template.Replace("{MAVEN_CFG_SEC_RUNTIME}", T("maven_cfg_sec_runtime"));
+                template = template.Replace("{MAVEN_CFG_SEC_REPO}", T("maven_cfg_sec_repo"));
+                template = template.Replace("{MAVEN_CFG_SEC_SETTINGS}", T("maven_cfg_sec_settings"));
+                template = template.Replace("{PAGE_SIZE_LABEL}", T("pagination_page_size"));
+                template = template.Replace("{PAGE_FIRST}", T("pagination_first"));
+                template = template.Replace("{PAGE_PREV}", T("pagination_prev"));
+                template = template.Replace("{PAGE_NEXT}", T("pagination_next"));
+                template = template.Replace("{PAGE_LAST}", T("pagination_last"));
+
+                respBody = Encoding.UTF8.GetBytes(template);
+            }
+            else if (path == "data")
+            {
+                MavenScanResult res;
+                lock (mavenScanLock)
+                {
+                    res = cachedResult;
+                }
+
+                if (res == null)
+                {
+                    respBody = Encoding.UTF8.GetBytes("{\"scanning\":" + (isScanning ? "true" : "false") + ",\"artifacts\":[],\"totalArtifacts\":0,\"totalSize\":0,\"localRepoPath\":\"\",\"settingsPath\":\"\",\"mavenVersion\":\"\",\"javaVersion\":\"\"}");
+                }
+                else
+                {
+                    StringBuilder sbData = new StringBuilder();
+                    sbData.Append("{\"scanning\":").Append(isScanning ? "true" : "false");
+                    sbData.Append(",\"totalArtifacts\":").Append(res.TotalArtifacts);
+                    sbData.Append(",\"totalSize\":").Append(res.TotalSize);
+                    sbData.Append(",\"localRepoPath\":\"").Append(EscapeJson(res.LocalRepoPath)).Append("\"");
+                    sbData.Append(",\"settingsPath\":\"").Append(EscapeJson(res.SettingsPath)).Append("\"");
+                    sbData.Append(",\"mavenVersion\":\"").Append(EscapeJson(res.MavenVersion)).Append("\"");
+                    sbData.Append(",\"mavenPath\":\"").Append(EscapeJson(res.MavenPath)).Append("\"");
+                    sbData.Append(",\"javaVersion\":\"").Append(EscapeJson(res.JavaVersion)).Append("\"");
+                    sbData.Append(",\"javaHome\":\"").Append(EscapeJson(res.JavaHome)).Append("\"");
+
+                    sbData.Append(",\"artifacts\":[");
+                    for (int i = 0; i < res.Artifacts.Count; i++)
+                    {
+                        if (i > 0) sbData.Append(",");
+                        MavenArtifactItem a = res.Artifacts[i];
+                        sbData.Append("{");
+                        sbData.Append("\"groupId\":\"").Append(EscapeJson(a.GroupId)).Append("\"");
+                        sbData.Append(",\"artifactId\":\"").Append(EscapeJson(a.ArtifactId)).Append("\"");
+                        sbData.Append(",\"version\":\"").Append(EscapeJson(a.Version)).Append("\"");
+                        sbData.Append(",\"packaging\":\"").Append(EscapeJson(a.Packaging)).Append("\"");
+                        sbData.Append(",\"size\":").Append(a.Size);
+                        sbData.Append(",\"lastModified\":\"").Append(EscapeJson(a.LastModified.ToString("yyyy-MM-dd HH:mm"))).Append("\"");
+                        sbData.Append(",\"localPath\":\"").Append(EscapeJson(a.LocalPath)).Append("\"");
+                        sbData.Append(",\"hasSources\":").Append(a.HasSources ? "true" : "false");
+                        sbData.Append(",\"hasJavadoc\":").Append(a.HasJavadoc ? "true" : "false");
+                        sbData.Append(",\"depCount\":").Append(a.DepCount);
+                        sbData.Append(",\"parseFailed\":").Append(a.ParseFailed ? "true" : "false");
+                        sbData.Append(",\"failReason\":\"").Append(EscapeJson(a.FailReason ?? "")).Append("\"");
+                        sbData.Append(",\"description\":\"").Append(EscapeJson(a.Description ?? "")).Append("\"");
+                        sbData.Append(",\"license\":\"").Append(EscapeJson(a.License ?? "")).Append("\"");
+                        sbData.Append(",\"isKmp\":").Append(a.IsKmp ? "true" : "false");
+                        sbData.Append(",\"kmpPlatforms\":[");
+                        for (int k = 0; k < a.KmpPlatforms.Count; k++)
+                        {
+                            if (k > 0) sbData.Append(",");
+                            sbData.Append("\"").Append(EscapeJson(a.KmpPlatforms[k])).Append("\"");
+                        }
+                        sbData.Append("]");
+                        sbData.Append(",\"dependencies\":{");
+                        int dc = 0;
+                        foreach (var d in a.Dependencies)
+                        {
+                            if (dc++ > 0) sbData.Append(",");
+                            sbData.Append("\"").Append(EscapeJson(d.Key)).Append("\":\"").Append(EscapeJson(d.Value ?? "")).Append("\"");
+                        }
+                        sbData.Append("}}");
+                    }
+                    sbData.Append("]}");
+                    respBody = Encoding.UTF8.GetBytes(sbData.ToString());
+                }
+            }
+            else if (path == "search")
+            {
+                string q = query.ContainsKey("q") ? (query["q"] ?? "").ToLower() : "";
+                List<MavenArtifactItem> matches = new List<MavenArtifactItem>();
+                lock (mavenScanLock)
+                {
+                    if (cachedResult != null)
+                    {
+                        foreach (var a in cachedResult.Artifacts)
+                        {
+                            if (string.IsNullOrEmpty(q) ||
+                                a.GroupId.ToLower().Contains(q) ||
+                                a.ArtifactId.ToLower().Contains(q) ||
+                                a.Version.ToLower().Contains(q))
+                            {
+                                matches.Add(a);
+                            }
+                        }
+                    }
+                }
+
+                StringBuilder sb = new StringBuilder();
+                sb.Append("[");
+                for (int i = 0; i < matches.Count; i++)
+                {
+                    if (i > 0) sb.Append(",");
+                    var a = matches[i];
+                    sb.Append("{\"groupId\":\"").Append(EscapeJson(a.GroupId)).Append("\"");
+                    sb.Append(",\"artifactId\":\"").Append(EscapeJson(a.ArtifactId)).Append("\"");
+                    sb.Append(",\"version\":\"").Append(EscapeJson(a.Version)).Append("\"");
+                    sb.Append(",\"packaging\":\"").Append(EscapeJson(a.Packaging)).Append("\"");
+                    sb.Append(",\"size\":").Append(a.Size);
+                    sb.Append(",\"hasSources\":").Append(a.HasSources ? "true" : "false");
+                    sb.Append(",\"hasJavadoc\":").Append(a.HasJavadoc ? "true" : "false");
+                    sb.Append(",\"depCount\":").Append(a.DepCount);
+                    sb.Append(",\"localPath\":\"").Append(EscapeJson(a.LocalPath)).Append("\"");
+                    sb.Append("}");
+                }
+                sb.Append("]");
+                respBody = Encoding.UTF8.GetBytes("{\"success\":true,\"results\":" + sb.ToString() + ",\"total\":" + matches.Count + "}");
+            }
+            else if (path == "refresh")
+            {
+                TriggerMavenScanAsync(true);
+                respBody = Encoding.UTF8.GetBytes("{\"success\":true,\"message\":\"" + EscapeJson(T("api_gradle_scan_started")) + "\"}");
+            }
+            else if (path == "open-path")
+            {
+                string p = query.ContainsKey("path") ? query["path"] : "";
+                if (string.IsNullOrEmpty(p))
+                {
+                    status = 400;
+                    respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"message\":\"" + EscapeJson(T("api_missing_path")) + "\"}");
+                }
+                else if (Directory.Exists(p) || File.Exists(p))
+                {
+                    Process.Start("explorer.exe", Directory.Exists(p) ? p : ("/select,\"" + p + "\""));
+                    respBody = Encoding.UTF8.GetBytes("{\"success\":true}");
+                }
+                else
+                {
+                    status = 404;
+                    respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"message\":\"" + EscapeJson(T("api_path_not_found")) + "\"}");
+                }
+            }
+            else if (path == "terminal")
+            {
+                string p = query.ContainsKey("path") ? query["path"] : "";
+                if (string.IsNullOrEmpty(p))
+                {
+                    status = 400;
+                    respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"message\":\"" + EscapeJson(T("api_missing_path")) + "\"}");
+                }
+                else
+                {
+                    string targetDir = Directory.Exists(p) ? p : Path.GetDirectoryName(p);
+                    if (!string.IsNullOrEmpty(targetDir) && Directory.Exists(targetDir))
+                    {
+                        ProcessStartInfo psi = new ProcessStartInfo
+                        {
+                            FileName = "powershell.exe",
+                            WorkingDirectory = targetDir,
+                            UseShellExecute = true
+                        };
+                        Process.Start(psi);
+                        respBody = Encoding.UTF8.GetBytes("{\"success\":true}");
+                    }
+                    else
+                    {
+                        status = 404;
+                        respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"message\":\"" + EscapeJson(T("api_path_not_found")) + "\"}");
+                    }
+                }
+            }
+            else if (path == "pom")
+            {
+                string p = query.ContainsKey("path") ? query["path"] : "";
+                if (string.IsNullOrEmpty(p))
+                {
+                    status = 400;
+                    respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"message\":\"" + EscapeJson(T("api_missing_path")) + "\"}");
+                }
+                else
+                {
+                    string[] candidates = new string[]
+                    {
+                        Path.Combine(p, "pom.xml"),
+                        p.EndsWith(".pom") ? p : ""
+                    };
+
+                    bool found = false;
+                    foreach (string candidate in candidates)
+                    {
+                        if (string.IsNullOrEmpty(candidate)) continue;
+                        if (File.Exists(candidate))
+                        {
+                            string content = File.ReadAllText(candidate, Encoding.UTF8);
+                            respBody = Encoding.UTF8.GetBytes("{\"success\":true,\"content\":\"" + EscapeJson(content) + "\"}");
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found && Directory.Exists(p))
+                    {
+                        string[] pomFiles = Directory.GetFiles(p, "*.pom");
+                        if (pomFiles.Length > 0 && File.Exists(pomFiles[0]))
+                        {
+                            string content = File.ReadAllText(pomFiles[0], Encoding.UTF8);
+                            respBody = Encoding.UTF8.GetBytes("{\"success\":true,\"content\":\"" + EscapeJson(content) + "\"}");
+                            found = true;
+                        }
+                    }
+
+                    if (!found)
+                    {
+                        status = 404;
+                        respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"message\":\"" + EscapeJson(T("api_file_not_found")) + "\"}");
+                    }
+                }
+            }
+            else if (path == "clean-invalid" && method == "POST")
+            {
+                string bodyStr = Encoding.UTF8.GetString(body);
+                List<string> paths = ExtractStringArrayFromJson(bodyStr);
+                EnsureMavenCacheLoaded();
+                int cleaned = CleanInvalidByPaths(paths);
+                respBody = Encoding.UTF8.GetBytes("{\"success\":true,\"cleaned\":" + cleaned + ",\"message\":\"Cleaned " + cleaned + " invalid directories.\"}");
+            }
+            else if (path == "clean-preview")
+            {
+                EnsureMavenCacheLoaded();
+                StringBuilder pb = new StringBuilder();
+                int pcount = 0;
+                lock (mavenScanLock)
+                {
+                    if (cachedResult != null)
+                    {
+                        foreach (var a in cachedResult.Artifacts)
+                        {
+                            string rt;
+                            if (!IsInvalidArtifact(a, out rt)) continue;
+                            if (pcount > 0) pb.Append(",");
+                            pb.Append("{\"path\":\"").Append(EscapeJson(a.LocalPath))
+                              .Append("\",\"coord\":\"").Append(EscapeJson(a.GroupId + ":" + a.ArtifactId + ":v" + a.Version))
+                              .Append("\",\"size\":").Append(a.Size)
+                              .Append(",\"reason\":\"").Append(rt).Append("\"}");
+                            pcount++;
+                        }
+                    }
+                }
+                respBody = Encoding.UTF8.GetBytes("{\"success\":true,\"count\":" + pcount + ",\"items\":[" + pb.ToString() + "]}");
+            }
+            else if (path == "retry-items" && method == "POST")
+            {
+                string bodyStr = Encoding.UTF8.GetString(body);
+                List<string> paths = ExtractStringArrayFromJson(bodyStr);
+                EnsureMavenCacheLoaded();
+                int retried = RetryParseItems(paths);
+                respBody = Encoding.UTF8.GetBytes("{\"success\":true,\"retried\":" + retried + ",\"message\":\"Retried " + retried + " artifacts.\"}");
+            }
+            else if (path == "delete-items" && method == "POST")
+            {
+                string bodyStr = Encoding.UTF8.GetString(body);
+                List<string> paths = ExtractStringArrayFromJson(bodyStr);
+                EnsureMavenCacheLoaded();
+                int deleted = DeleteArtifactsByPaths(paths);
+                respBody = Encoding.UTF8.GetBytes("{\"success\":true,\"deleted\":" + deleted + ",\"message\":\"Deleted " + deleted + " artifacts.\"}");
+            }
+            else if (path == "item-files")
+            {
+                string p = query.ContainsKey("path") ? query["path"] : "";
+                if (string.IsNullOrEmpty(p) || !IsPathUnderRoot(p, GetDefaultMavenLocalRepo()))
+                {
+                    status = 403;
+                    respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"message\":\"Path outside repository root.\"}");
+                }
+                else if (!Directory.Exists(p))
+                {
+                    status = 404;
+                    respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"message\":\"Directory not found.\"}");
+                }
+                else
+                {
+                    StringBuilder fb = new StringBuilder();
+                    int count = 0;
+                    foreach (string f in Directory.GetFiles(p, "*", SearchOption.AllDirectories))
+                    {
+                        try
+                        {
+                            FileInfo fi = new FileInfo(f);
+                            if (count > 0) fb.Append(",");
+                            fb.Append("{\"name\":\"").Append(EscapeJson(fi.Name))
+                              .Append("\",\"path\":\"").Append(EscapeJson(fi.FullName))
+                              .Append("\",\"size\":").Append(fi.Length)
+                              .Append(",\"sizeFormatted\":\"").Append(EscapeJson(FormatFileSize(fi.Length)))
+                              .Append("\",\"lastModified\":\"").Append(EscapeJson(fi.LastWriteTime.ToString("yyyy-MM-dd HH:mm")))
+                              .Append("\"}");
+                            count++;
+                        }
+                        catch { }
+                    }
+                    respBody = Encoding.UTF8.GetBytes("{\"success\":true,\"count\":" + count + ",\"files\":[" + fb.ToString() + "]}");
+                }
+            }
+            else if (path == "kmp-variants")
+            {
+                string p = query.ContainsKey("path") ? query["path"] : "";
+                if (string.IsNullOrEmpty(p) || !IsPathUnderRoot(p, GetDefaultMavenLocalRepo()))
+                {
+                    status = 403;
+                    respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"message\":\"Path outside repository root.\"}");
+                }
+                else
+                {
+                    // 构造虚拟响应提取结果
+                    StringBuilder vb = new StringBuilder();
+                    int count = 0;
+                    string vDir = Directory.Exists(p) ? p : Path.GetDirectoryName(p);
+                    if (Directory.Exists(vDir))
+                    {
+                        DirectoryInfo di = new DirectoryInfo(vDir);
+                        string artifactDir = di.Parent != null ? di.Parent.FullName : "";
+                        string curVer = di.Name;
+                        if (!string.IsNullOrEmpty(artifactDir) && Directory.Exists(artifactDir))
+                        {
+                            DirectoryInfo aParent = di.Parent.Parent;
+                            if (aParent != null)
+                            {
+                                string curArtifactPrefix = di.Parent.Name;
+                                foreach (DirectoryInfo sib in aParent.GetDirectories())
+                                {
+                                    if (sib.Name.StartsWith(curArtifactPrefix, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        string candVer = Path.Combine(sib.FullName, curVer);
+                                        if (Directory.Exists(candVer))
+                                        {
+                                            string suffix = sib.Name.Length > curArtifactPrefix.Length ? sib.Name.Substring(curArtifactPrefix.Length).TrimStart('-', '_') : "";
+                                            if (count > 0) vb.Append(",");
+                                            vb.Append("{\"artifactId\":\"").Append(EscapeJson(sib.Name))
+                                              .Append("\",\"platform\":\"").Append(EscapeJson(string.IsNullOrEmpty(suffix) ? "common" : suffix))
+                                              .Append("\",\"path\":\"").Append(EscapeJson(candVer))
+                                              .Append("\"}");
+                                            count++;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    respBody = Encoding.UTF8.GetBytes("{\"success\":true,\"count\":" + count + ",\"variants\":[" + vb.ToString() + "]}");
+                }
+            }
+            else
+            {
+                status = 404;
+                respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"error\":\"unknown path: " + path + "\"}");
+            }
+        }
+        catch (Exception ex)
+        {
+            status = 500;
+            respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"error\":\"" + EscapeJson(ex.Message) + "\"}");
+        }
+
+        Dictionary<string, object> respHead = new Dictionary<string, object>();
+        respHead["id"] = id;
+        respHead["status"] = status;
+        respHead["type"] = contentType;
+        respHead["bodyLen"] = respBody == null ? 0 : respBody.Length;
+        WriteFrame(stdout, T_RESPONSE_HEAD, Encoding.UTF8.GetBytes(json.Serialize(respHead)));
+
+        if (respBody != null && respBody.Length > 0)
+        {
+            int off = 0;
+            while (off < respBody.Length)
+            {
+                int n = Math.Min(CHUNK, respBody.Length - off);
+                byte[] frame = new byte[4 + n];
+                frame[0] = (byte)(id & 0xFF);
+                frame[1] = (byte)((id >> 8) & 0xFF);
+                frame[2] = (byte)((id >> 16) & 0xFF);
+                frame[3] = (byte)((id >> 24) & 0xFF);
+                Array.Copy(respBody, off, frame, 4, n);
+                WriteFrame(stdout, T_BIN_CHUNK, frame);
+                off += n;
+            }
+        }
+    }
+
+    private static void WriteFrame(Stream s, byte type, byte[] payload)
+    {
+        byte[] head = new byte[5];
+        head[0] = type;
+        head[1] = (byte)(payload.Length & 0xFF);
+        head[2] = (byte)((payload.Length >> 8) & 0xFF);
+        head[3] = (byte)((payload.Length >> 16) & 0xFF);
+        head[4] = (byte)((payload.Length >> 24) & 0xFF);
+        s.Write(head, 0, 5);
+        if (payload.Length > 0) s.Write(payload, 0, payload.Length);
+        s.Flush();
+    }
+
+    private static void ReadFrame(Stream s, out byte type, out byte[] payload)
+    {
+        byte[] head = ReadExactly(s, 5);
+        int len = head[1] | (head[2] << 8) | (head[3] << 16) | (head[4] << 24);
+        if (len < 0 || len > 16 * 1024 * 1024) throw new IOException("bad frame length");
+        type = head[0];
+        payload = len == 0 ? new byte[0] : ReadExactly(s, len);
+    }
+
+    private static byte[] ReadExactly(Stream s, int count)
+    {
+        byte[] buf = new byte[count];
+        int off = 0;
+        while (off < count)
+        {
+            int n = s.Read(buf, off, count - off);
+            if (n <= 0) throw new EndOfStreamException();
+            off += n;
+        }
+        return buf;
     }
 }

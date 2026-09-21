@@ -91,18 +91,32 @@
                 </div>
 
                 <div class='settings-section'>
-                    <div class='settings-section-header' style='display: flex; justify-content: space-between; align-items: center;'>
-                        <div class='settings-section-title' style='margin: 0;'>🧩 {SETTINGS_SEC_PLUGINS}</div>
-                        <div style='display: flex; gap: 6px; align-items: center;'>
-                            <button type='button' class='settings-btn-sub' onclick='refreshPluginsList()'>{SETTINGS_PLUGIN_BTN_REFRESH}</button>
-                            <button type='button' class='settings-btn-sub' onclick='toggleAllPlugins(true)'>{SETTINGS_PLUGIN_BTN_ENABLE_ALL}</button>
-                            <button type='button' class='settings-btn-sub' onclick='toggleAllPlugins(false)'>{SETTINGS_PLUGIN_BTN_DISABLE_ALL}</button>
-                            <button type='button' class='settings-btn-sub' onclick='openPluginsFolder()'>{SETTINGS_PLUGIN_BTN_OPEN_DIR}</button>
+                    <div class='settings-section-header settings-plugin-header'>
+                        <div class='settings-section-title' style='margin: 0;'>
+                            <span>🧩 {SETTINGS_SEC_PLUGINS}</span>
+                            <span id='settings-plugins-badge' class='settings-plugins-badge' style='display: none;'>0</span>
+                        </div>
+                        <div class='settings-plugin-header-actions'>
+                            <button type='button' class='settings-btn-sub' onclick='openPluginsFolder()' title='{SETTINGS_PLUGIN_BTN_OPEN_DIR}'>📂 {SETTINGS_PLUGIN_BTN_OPEN_DIR}</button>
+                            <button type='button' class='settings-btn-sub' onclick='refreshPluginsList()' title='{SETTINGS_PLUGIN_BTN_REFRESH}'>🔄 {SETTINGS_PLUGIN_BTN_REFRESH}</button>
                         </div>
                     </div>
                     <div class='settings-desc'>{SETTINGS_PLUGIN_DESC}</div>
-                    <div id='settings-plugins-container' class='settings-plugins-list' style='margin-top: 10px; display: flex; flex-direction: column; gap: 8px; max-height: 240px; overflow-y: auto; padding-right: 4px;'>
-                        <div style='text-align: center; color: var(--text-muted); padding: 15px;'>Loading...</div>
+                    
+                    <!-- Sub-toolbar: Stats & Batch Actions -->
+                    <div class='settings-plugins-toolbar'>
+                        <div id='settings-plugins-stat' class='settings-plugins-stat'></div>
+                        <div class='settings-plugins-batch-group'>
+                            <button type='button' class='settings-btn-batch' onclick='toggleAllPlugins(true)'>{SETTINGS_PLUGIN_BTN_ENABLE_ALL}</button>
+                            <button type='button' class='settings-btn-batch' onclick='toggleAllPlugins(false)'>{SETTINGS_PLUGIN_BTN_DISABLE_ALL}</button>
+                        </div>
+                    </div>
+
+                    <div id='settings-plugins-container' class='settings-plugins-list'>
+                        <div class='settings-plugins-loading'>
+                            <span class='settings-plugins-spinner'></span>
+                            <span>Loading...</span>
+                        </div>
                     </div>
                 </div>
 

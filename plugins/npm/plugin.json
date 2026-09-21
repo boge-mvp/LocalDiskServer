@@ -1,0 +1,13 @@
+{
+  "id": "npm",
+  "name": "NPM 依赖管理",
+  "version": "1.0.0",
+  "author": "LocalDiskServer",
+  "description": "本地 Node 全局模块与 npm-cache 依赖缓存分析、日志与 npx 清理管理",
+  "icon": "📦",
+  "order": 30,
+  "timeout": 15,
+  "concurrency": 4,
+  "warmup": true,
+  "layout": "explorer"
+}

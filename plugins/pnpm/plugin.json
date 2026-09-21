@@ -1,0 +1,13 @@
+{
+  "id": "pnpm",
+  "name": "PNPM 虚拟存储",
+  "version": "1.0.0",
+  "author": "LocalDiskServer",
+  "description": "本地 PNPM 全局包、跨盘虚拟存储 (pnpm-store) 探查、dlx 与元数据缓存分析",
+  "icon": "⚡",
+  "order": 40,
+  "timeout": 15,
+  "concurrency": 4,
+  "warmup": true,
+  "layout": "explorer"
+}

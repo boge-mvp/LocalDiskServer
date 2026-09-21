@@ -1,0 +1,13 @@
+{
+  "id": "maven",
+  "name": "Maven 本地仓库",
+  "version": "1.0.0",
+  "author": "LocalDiskServer",
+  "description": "本地 Maven 依赖仓库扫描、POM 树解析、KMP 适配与坏包清理预览",
+  "icon": "🪶",
+  "order": 20,
+  "timeout": 15,
+  "concurrency": 4,
+  "warmup": true,
+  "layout": "explorer"
+}

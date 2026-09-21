@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -6,22 +6,29 @@ using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Web.Script.Serialization;
 
-namespace LocalDiskServer
+internal static class NpmBackend
 {
+    private const int PROTOCOL_VERSION = 1;
+    private const byte T_HANDSHAKE_REQ = 0x01;
+    private const byte T_HANDSHAKE_ACK = 0x02;
+    private const byte T_REQUEST_HEAD = 0x03;
+    private const byte T_RESPONSE_HEAD = 0x04;
+    private const byte T_BIN_CHUNK = 0x05;
+    private const int CHUNK = 64 * 1024;
+
+    private static readonly JavaScriptSerializer json = new JavaScriptSerializer();
+    private static Dictionary<string, object> hostContext;
+    private static string currentLanguage = "zh-CN";
+    private static readonly Dictionary<string, string> i18nStrings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
     public class NpmSubModuleItem
     {
         public string Name { get; set; }
         public string Version { get; set; }
         public string InstallPath { get; set; }
         public long Size { get; set; }
-
-        public NpmSubModuleItem()
-        {
-            Name = "";
-            Version = "";
-            InstallPath = "";
-        }
     }
 
     public class NpmPackageItem
@@ -70,12 +77,12 @@ namespace LocalDiskServer
         public string NpmPath { get; set; }
         public string GlobalPrefix { get; set; }
         public string GlobalBinDir { get; set; }
+        public string RegistryUrl { get; set; }
         public string NpmRoot { get; set; }
         public string CacheDir { get; set; }
         public string LogsDir { get; set; }
         public string NpxDir { get; set; }
         public string CacacheDir { get; set; }
-        public string RegistryUrl { get; set; }
         public string NpmrcPath { get; set; }
         public string NpmrcContent { get; set; }
         public Dictionary<string, string> NpmrcConfigs { get; set; }
@@ -83,26 +90,162 @@ namespace LocalDiskServer
         public NpmScanResult()
         {
             Packages = new List<NpmPackageItem>();
+            NpmrcConfigs = new Dictionary<string, string>();
             NodeVersion = "";
             NodePath = "";
             NpmVersion = "";
             NpmPath = "";
             GlobalPrefix = "";
             GlobalBinDir = "";
+            RegistryUrl = "";
             NpmRoot = "";
             CacheDir = "";
             LogsDir = "";
             NpxDir = "";
             CacacheDir = "";
-            RegistryUrl = "";
             NpmrcPath = "";
             NpmrcContent = "";
-            NpmrcConfigs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
     }
 
-    public static class NpmExplorer
+    private static int Main()
     {
+        int parentPid = -1;
+        try { parentPid = Convert.ToInt32(Environment.GetEnvironmentVariable("LDS_PARENT_PID")); } catch { }
+        if (parentPid > 0)
+        {
+            Thread watchdog = new Thread(delegate()
+            {
+                while (true)
+                {
+                    Thread.Sleep(3000);
+                    try { Process.GetProcessById(parentPid); } catch { Environment.Exit(0); }
+                }
+            });
+            watchdog.IsBackground = true;
+            watchdog.Start();
+        }
+
+        Stream stdin = Console.OpenStandardInput();
+        Stream stdout = Console.OpenStandardOutput();
+
+        // 启动时后台自动扫描
+        TriggerNpmScanAsync();
+
+        try
+        {
+            while (true)
+            {
+                byte type;
+                byte[] payload;
+                ReadFrame(stdin, out type, out payload);
+
+                if (type == T_HANDSHAKE_REQ)
+                {
+                    hostContext = json.DeserializeObject(Encoding.UTF8.GetString(payload)) as Dictionary<string, object>;
+                    if (hostContext != null)
+                    {
+                        if (hostContext.ContainsKey("parentPid"))
+                        {
+                            parentPid = Convert.ToInt32(hostContext["parentPid"]);
+                        }
+                        if (hostContext.ContainsKey("language") && hostContext["language"] != null)
+                        {
+                            currentLanguage = Convert.ToString(hostContext["language"]);
+                        }
+                    }
+                    LoadLanguage(currentLanguage);
+                    Dictionary<string, object> ack = new Dictionary<string, object>();
+                    ack["protocol"] = PROTOCOL_VERSION;
+                    ack["plugin"] = "npm";
+                    ack["version"] = "1.0.0";
+                    WriteFrame(stdout, T_HANDSHAKE_ACK, Encoding.UTF8.GetBytes(json.Serialize(ack)));
+                    Log("NPM 插件握手完成");
+                }
+                else if (type == T_REQUEST_HEAD)
+                {
+                    HandleRequest(stdin, stdout, payload);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log("NPM 插件致命异常退出: " + ex.Message);
+            return 1;
+        }
+    }
+
+    private static void LoadLanguage(string lang)
+    {
+        try
+        {
+            string langFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "lang\\" + lang + ".ini");
+            if (!File.Exists(langFile))
+            {
+                langFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "lang\\zh-CN.ini");
+            }
+            if (File.Exists(langFile))
+            {
+                string[] lines = File.ReadAllLines(langFile, Encoding.UTF8);
+                lock (i18nStrings)
+                {
+                    i18nStrings.Clear();
+                    foreach (string l in lines)
+                    {
+                        string t = l.Trim();
+                        if (string.IsNullOrEmpty(t) || t.StartsWith("#") || t.StartsWith(";")) continue;
+                        int eq = t.IndexOf('=');
+                        if (eq > 0)
+                        {
+                            string k = t.Substring(0, eq).Trim();
+                            string v = t.Substring(eq + 1).Trim();
+                            i18nStrings[k] = v.Replace("\\n", "\n").Replace("\\t", "\t");
+                        }
+                    }
+                }
+            }
+        }
+        catch { }
+    }
+
+    private static string T(string key, params object[] args)
+    {
+        string val;
+        lock (i18nStrings)
+        {
+            if (!i18nStrings.TryGetValue(key, out val)) val = key;
+        }
+        if (args != null && args.Length > 0)
+        {
+            try { return string.Format(val, args); } catch { return val; }
+        }
+        return val;
+    }
+
+    private static string EscapeJson(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n").Replace("\t", "\\t");
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes <= 0) return "0 B";
+        string[] units = new string[] { "B", "KB", "MB", "GB", "TB" };
+        int i = 0;
+        double d = bytes;
+        while (d >= 1024 && i < units.Length - 1)
+        {
+            d /= 1024;
+            i++;
+        }
+        return string.Format("{0:0.##} {1}", d, units[i]);
+    }
+
+    private static void Log(string msg)
+    {
+        Console.Error.WriteLine("[npm] " + msg);
+    }
         private static readonly object npmScanLock = new object();
         private static bool isScanning = false;
         private static NpmScanResult cachedResult = null;
@@ -135,12 +278,12 @@ namespace LocalDiskServer
                 cachedCacheTicks = 0;
                 GC.Collect();
             }
-            Logger.Log(I18nManager.T("log_dev_ecosystem_released"));
+            Log(T("log_dev_ecosystem_released"));
         }
 
         public static void TriggerNpmScanAsync(bool forceRescan = false)
         {
-            if (!ServerApplicationContext.enable_dev_ecosystem) return;
+            if (!true) return;
 
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -174,13 +317,13 @@ namespace LocalDiskServer
                         {
                             if (curRootTicks == sRoot && curCacheTicks == sCache)
                             {
-                                Logger.Log(I18nManager.T("log_dev_ecosystem_verified"));
+                                Log(T("log_dev_ecosystem_verified"));
                                 return;
                             }
                         }
                     }
 
-                    Logger.Log(I18nManager.T("log_npm_scan_started"));
+                    Log(T("log_npm_scan_started"));
                     NpmScanResult res = DoNpmScan(npmRoot, cacheDir);
 
                     lock (npmScanLock)
@@ -191,11 +334,11 @@ namespace LocalDiskServer
                     }
 
                     SaveToDiskCache(curRootTicks, curCacheTicks);
-                    Logger.Log(I18nManager.T("log_npm_scan_finished", res.Packages.Count, FormatSize(res.CacacheSize + res.NpxSize + res.LogsSize)));
+                    Log(T("log_npm_scan_finished", res.Packages.Count, FormatSize(res.CacacheSize + res.NpxSize + res.LogsSize)));
                 }
                 catch (Exception ex)
                 {
-                    Logger.Log("Npm scan error: " + ex.Message);
+                    Log("Npm scan error: " + ex.Message);
                 }
                 finally
                 {
@@ -676,7 +819,7 @@ namespace LocalDiskServer
                 }
 
                 File.WriteAllText(cacheFile, sb.ToString(), Encoding.UTF8);
-                Logger.Log(I18nManager.T("log_dev_ecosystem_saved", cacheFile));
+                Log(T("log_dev_ecosystem_saved", cacheFile));
             }
             catch { }
         }
@@ -737,7 +880,7 @@ namespace LocalDiskServer
                 }
 
                 sw.Stop();
-                Logger.Log(I18nManager.T("log_dev_ecosystem_fast_loaded", "NPM", res.Packages.Count, sw.ElapsedMilliseconds));
+                Log(T("log_dev_ecosystem_fast_loaded", "NPM", res.Packages.Count, sw.ElapsedMilliseconds));
                 return true;
             }
             catch
@@ -751,94 +894,90 @@ namespace LocalDiskServer
         private static string EscapeField(string text) { return (text ?? "").Replace("\t", " ").Replace("\r", "").Replace("\n", " "); }
         private static string UnescapeField(string text) { return text ?? ""; }
 
-        public static void ServeNpmDashboard(HttpListenerResponse response)
+    private static void HandleRequest(Stream stdin, Stream stdout, byte[] payload)
+    {
+        Dictionary<string, object> head = json.DeserializeObject(Encoding.UTF8.GetString(payload)) as Dictionary<string, object>;
+        int id = Convert.ToInt32(head["id"]);
+        string method = Convert.ToString(head["method"]);
+        string path = head.ContainsKey("path") ? Convert.ToString(head["path"]) : "";
+        long bodyLen = head.ContainsKey("bodyLen") ? Convert.ToInt64(head["bodyLen"]) : 0;
+
+        Dictionary<string, string> query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (head.ContainsKey("query") && head["query"] is Dictionary<string, object>)
         {
-            if (!ServerApplicationContext.enable_dev_ecosystem)
+            foreach (var kvp in (Dictionary<string, object>)head["query"])
             {
-                response.Redirect("/");
-                response.OutputStream.Close();
-                return;
+                query[kvp.Key] = Convert.ToString(kvp.Value);
             }
-
-            if (cachedResult == null && !isScanning)
-            {
-                TriggerNpmScanAsync();
-            }
-
-            string template = HttpServer.LoadResource("npm.html");
-            if (string.IsNullOrEmpty(template))
-            {
-                HttpServer.ServeError(response, 500, I18nManager.T("err_internal", "npm.html not found"));
-                return;
-            }
-
-            string activePath = "/npm";
-            string currentLocale = I18nManager.CurrentLanguage;
-
-            StringBuilder sb = new StringBuilder();
-            sb.Append(HttpServer.GetHtmlHeader(I18nManager.T("npm_page_title"), activePath, "layout-explorer"));
-            sb.Append("<script>const currentView = 'npm';</script>");
-            sb.Append(FileExplorer.RenderSidebar(activePath, currentLocale));
-
-            // 多语言占位符
-            template = template.Replace("{NPM_BREADCRUMB}", I18nManager.T("npm_breadcrumb"));
-            template = template.Replace("{NPM_PAGE_TITLE}", I18nManager.T("npm_page_title"));
-            template = template.Replace("{LOBBY_PROTO_TOGGLE_TITLE}", I18nManager.T("lobby_proto_toggle_title"));
-            template = template.Replace("{NPM_STAT_PKGS}", I18nManager.T("npm_stat_pkgs"));
-            template = template.Replace("{NPM_STAT_CACACHE}", I18nManager.T("npm_stat_cacache"));
-            template = template.Replace("{NPM_STAT_TEMP}", I18nManager.T("npm_stat_temp"));
-            template = template.Replace("{NPM_STAT_ENV}", I18nManager.T("npm_stat_env"));
-            template = template.Replace("{NPM_SEARCH_PLACEHOLDER}", I18nManager.T("npm_search_placeholder"));
-            template = template.Replace("{NPM_BTN_RESCAN}", I18nManager.T("npm_btn_rescan"));
-            template = template.Replace("{NPM_BTN_CONFIG_DETAILS}", I18nManager.T("npm_btn_config_details"));
-            template = template.Replace("{NPM_BTN_CLEAN_LOGS}", I18nManager.T("npm_btn_clean_logs"));
-            template = template.Replace("{NPM_BTN_CLEAN_NPX}", I18nManager.T("npm_btn_clean_npx"));
-            template = template.Replace("{NPM_BTN_OPEN_NPMRC}", I18nManager.T("npm_btn_open_npmrc"));
-            template = template.Replace("{NPM_BTN_OPEN_ROOT}", I18nManager.T("npm_btn_open_root"));
-            template = template.Replace("{NPM_TH_NAME}", I18nManager.T("npm_th_name"));
-            template = template.Replace("{NPM_TH_VERSION}", I18nManager.T("npm_th_version"));
-            template = template.Replace("{NPM_TH_LICENSE}", I18nManager.T("npm_th_license"));
-            template = template.Replace("{NPM_TH_BIN}", I18nManager.T("npm_th_bin"));
-            template = template.Replace("{NPM_TH_SIZE}", I18nManager.T("npm_th_size"));
-            template = template.Replace("{PREVIEW_BTN_EXPAND}", I18nManager.T("preview_btn_expand"));
-            template = template.Replace("{PREVIEW_BTN_COLLAPSE}", I18nManager.T("preview_btn_collapse"));
-            template = template.Replace("{NPM_DETAIL_TITLE}", I18nManager.T("npm_detail_title"));
-            template = template.Replace("{NPM_DETAIL_EMPTY}", I18nManager.T("npm_detail_empty"));
-            template = template.Replace("{NPM_LOADING}", I18nManager.T("npm_loading"));
-            template = template.Replace("{MODAL_BTN_OK}", I18nManager.T("modal_btn_ok"));
-            template = template.Replace("{NPM_MODAL_CONFIG_TITLE}", I18nManager.T("npm_modal_config_title"));
-            template = template.Replace("{NPM_CFG_SEC_RUNTIME}", I18nManager.T("npm_cfg_sec_runtime"));
-            template = template.Replace("{NPM_CFG_SEC_PATHS}", I18nManager.T("npm_cfg_sec_paths"));
-            template = template.Replace("{NPM_CFG_SEC_NPMRC}", I18nManager.T("npm_cfg_sec_npmrc"));
-            template = template.Replace("{PAGE_SIZE_LABEL}", I18nManager.T("pagination_page_size"));
-            template = template.Replace("{PAGE_FIRST}", I18nManager.T("pagination_first"));
-            template = template.Replace("{PAGE_PREV}", I18nManager.T("pagination_prev"));
-            template = template.Replace("{PAGE_NEXT}", I18nManager.T("pagination_next"));
-            template = template.Replace("{PAGE_LAST}", I18nManager.T("pagination_last"));
-
-            sb.Append(template);
-            sb.Append(HttpServer.GetHtmlFooter());
-
-            byte[] buffer = Encoding.UTF8.GetBytes(sb.ToString());
-            response.ContentType = "text/html; charset=utf-8";
-            response.ContentLength64 = buffer.Length;
-            response.OutputStream.Write(buffer, 0, buffer.Length);
-            response.OutputStream.Close();
         }
 
-        public static bool HandleApi(string rawPath, HttpListenerRequest request, HttpListenerResponse response)
+        byte[] body = new byte[0];
+        if (bodyLen > 0)
         {
-            if (!rawPath.StartsWith("api/npm/", StringComparison.OrdinalIgnoreCase)) return false;
-
-            if (!ServerApplicationContext.enable_dev_ecosystem)
+            using (MemoryStream ms = new MemoryStream())
             {
-                HttpServer.ServeJson(response, 403, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("err_dev_ecosystem_disabled")) + "\"}");
-                return true;
+                long received = 0;
+                while (received < bodyLen)
+                {
+                    byte t;
+                    byte[] chunkPayload;
+                    ReadFrame(stdin, out t, out chunkPayload);
+                    if (t != T_BIN_CHUNK || chunkPayload.Length < 4) continue;
+                    int chunkId = chunkPayload[0] | (chunkPayload[1] << 8) | (chunkPayload[2] << 16) | (chunkPayload[3] << 24);
+                    if (chunkId != id) continue;
+                    ms.Write(chunkPayload, 4, chunkPayload.Length - 4);
+                    received += chunkPayload.Length - 4;
+                }
+                body = ms.ToArray();
             }
+        }
 
-            string subPath = rawPath.Substring(8).ToLower();
+        int status = 200;
+        string contentType = "application/json; charset=utf-8";
+        byte[] respBody = null;
 
-            if (subPath == "data")
+        try
+        {
+            if (path.Length == 0)
+            {
+                // 主页面输出
+                contentType = "text/html; charset=utf-8";
+                string htmlPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "index.html");
+                string template = File.ReadAllText(htmlPath, Encoding.UTF8);
+
+                template = template.Replace("{NPM_BREADCRUMB}", T("npm_breadcrumb"));
+                template = template.Replace("{NPM_PAGE_TITLE}", T("npm_page_title"));
+                template = template.Replace("{LOBBY_PROTO_TOGGLE_TITLE}", T("lobby_proto_toggle_title"));
+                template = template.Replace("{NPM_SEARCH_PLACEHOLDER}", T("npm_search_placeholder"));
+                template = template.Replace("{NPM_BTN_RESCAN}", T("npm_btn_rescan"));
+                template = template.Replace("{NPM_STAT_PKGS}", T("npm_stat_pkgs"));
+                template = template.Replace("{NPM_STAT_CACACHE}", T("npm_stat_cacache"));
+                template = template.Replace("{NPM_STAT_TEMP}", T("npm_stat_temp"));
+                template = template.Replace("{NPM_BTN_CONFIG_DETAILS}", T("npm_btn_config_details"));
+                template = template.Replace("{NPM_BTN_CLEAN_LOGS}", T("npm_btn_clean_logs"));
+                template = template.Replace("{NPM_BTN_CLEAN_NPX}", T("npm_btn_clean_npx"));
+                template = template.Replace("{NPM_BTN_OPEN_ROOT}", T("npm_btn_open_root"));
+                template = template.Replace("{NPM_TH_NAME}", T("npm_th_name"));
+                template = template.Replace("{NPM_TH_VERSION}", T("npm_th_version"));
+                template = template.Replace("{NPM_TH_LICENSE}", T("npm_th_license"));
+                template = template.Replace("{NPM_TH_BIN}", T("npm_th_bin"));
+                template = template.Replace("{NPM_TH_SIZE}", T("npm_th_size"));
+                template = template.Replace("{NPM_LOADING}", T("npm_loading"));
+                template = template.Replace("{PREVIEW_BTN_EXPAND}", T("preview_btn_expand"));
+                template = template.Replace("{NPM_DETAIL_TITLE}", T("npm_detail_title"));
+                template = template.Replace("{PREVIEW_BTN_COLLAPSE}", T("preview_btn_collapse"));
+                template = template.Replace("{NPM_DETAIL_EMPTY}", T("npm_detail_empty"));
+                template = template.Replace("{MODAL_BTN_OK}", T("modal_btn_ok"));
+                template = template.Replace("{NPM_MODAL_CONFIG_TITLE}", T("npm_modal_config_title"));
+                template = template.Replace("{PAGE_SIZE_LABEL}", T("pagination_page_size"));
+                template = template.Replace("{PAGE_FIRST}", T("pagination_first"));
+                template = template.Replace("{PAGE_PREV}", T("pagination_prev"));
+                template = template.Replace("{PAGE_NEXT}", T("pagination_next"));
+                template = template.Replace("{PAGE_LAST}", T("pagination_last"));
+
+                respBody = Encoding.UTF8.GetBytes(template);
+            }
+            else if (path == "data")
             {
                 NpmScanResult res;
                 lock (npmScanLock)
@@ -848,126 +987,115 @@ namespace LocalDiskServer
 
                 if (res == null)
                 {
-                    HttpServer.ServeJson(response, 200, "{\"scanning\":" + (isScanning ? "true" : "false") + ",\"packages\":[],\"totalPkgSize\":0,\"cacacheSize\":0,\"npxSize\":0,\"logsSize\":0,\"registry\":\"\",\"npmRoot\":\"\",\"cacheDir\":\"\",\"npmrc\":\"\"}");
-                    return true;
-                }
-
-                StringBuilder sb = new StringBuilder();
-                sb.Append("{\"scanning\":").Append(isScanning ? "true" : "false");
-                sb.Append(",\"totalPkgSize\":").Append(res.TotalPkgSize);
-                sb.Append(",\"cacacheSize\":").Append(res.CacacheSize);
-                sb.Append(",\"npxSize\":").Append(res.NpxSize);
-                sb.Append(",\"logsSize\":").Append(res.LogsSize);
-                sb.Append(",\"nodeVersion\":\"").Append(HttpServer.EscapeJson(res.NodeVersion)).Append("\"");
-                sb.Append(",\"nodePath\":\"").Append(HttpServer.EscapeJson(res.NodePath)).Append("\"");
-                sb.Append(",\"npmVersion\":\"").Append(HttpServer.EscapeJson(res.NpmVersion)).Append("\"");
-                sb.Append(",\"npmPath\":\"").Append(HttpServer.EscapeJson(res.NpmPath)).Append("\"");
-                sb.Append(",\"globalPrefix\":\"").Append(HttpServer.EscapeJson(res.GlobalPrefix)).Append("\"");
-                sb.Append(",\"globalBinDir\":\"").Append(HttpServer.EscapeJson(res.GlobalBinDir)).Append("\"");
-                sb.Append(",\"registry\":\"").Append(HttpServer.EscapeJson(res.RegistryUrl)).Append("\"");
-                sb.Append(",\"npmRoot\":\"").Append(HttpServer.EscapeJson(res.NpmRoot)).Append("\"");
-                sb.Append(",\"cacheDir\":\"").Append(HttpServer.EscapeJson(res.CacheDir)).Append("\"");
-                sb.Append(",\"logsDir\":\"").Append(HttpServer.EscapeJson(res.LogsDir)).Append("\"");
-                sb.Append(",\"npxDir\":\"").Append(HttpServer.EscapeJson(res.NpxDir)).Append("\"");
-                sb.Append(",\"cacacheDir\":\"").Append(HttpServer.EscapeJson(res.CacacheDir)).Append("\"");
-                sb.Append(",\"npmrc\":\"").Append(HttpServer.EscapeJson(res.NpmrcPath)).Append("\"");
-                sb.Append(",\"npmrcContent\":\"").Append(HttpServer.EscapeJson(res.NpmrcContent)).Append("\"");
-                
-                sb.Append(",\"npmrcConfigs\":{");
-                int cfgIdx = 0;
-                foreach (var kvp in res.NpmrcConfigs)
-                {
-                    if (cfgIdx++ > 0) sb.Append(",");
-                    sb.Append("\"").Append(HttpServer.EscapeJson(kvp.Key)).Append("\":\"").Append(HttpServer.EscapeJson(kvp.Value)).Append("\"");
-                }
-                sb.Append("}");
-
-                sb.Append(",\"packages\":[");
-                for (int i = 0; i < res.Packages.Count; i++)
-                {
-                    if (i > 0) sb.Append(",");
-                    NpmPackageItem p = res.Packages[i];
-                    sb.Append("{");
-                    sb.Append("\"name\":\"").Append(HttpServer.EscapeJson(p.Name)).Append("\"");
-                    sb.Append(",\"version\":\"").Append(HttpServer.EscapeJson(p.Version)).Append("\"");
-                    sb.Append(",\"description\":\"").Append(HttpServer.EscapeJson(p.Description)).Append("\"");
-                    sb.Append(",\"license\":\"").Append(HttpServer.EscapeJson(p.License)).Append("\"");
-                    sb.Append(",\"author\":\"").Append(HttpServer.EscapeJson(p.Author)).Append("\"");
-                    sb.Append(",\"homepage\":\"").Append(HttpServer.EscapeJson(p.Homepage)).Append("\"");
-                    sb.Append(",\"bin\":\"").Append(HttpServer.EscapeJson(p.Bin)).Append("\"");
-                    sb.Append(",\"size\":").Append(p.Size);
-                    sb.Append(",\"lastModified\":\"").Append(HttpServer.EscapeJson(p.LastModified.ToString("yyyy-MM-dd HH:mm"))).Append("\"");
-                    sb.Append(",\"installPath\":\"").Append(HttpServer.EscapeJson(p.InstallPath)).Append("\"");
-                    sb.Append(",\"depsCount\":").Append(p.DepsCount);
-                    sb.Append(",\"declaredDependencies\":{");
-                    int depIdx = 0;
-                    foreach (var d in p.DeclaredDependencies)
-                    {
-                        if (depIdx++ > 0) sb.Append(",");
-                        sb.Append("\"").Append(HttpServer.EscapeJson(d.Key)).Append("\":\"").Append(HttpServer.EscapeJson(d.Value)).Append("\"");
-                    }
-                    sb.Append("}");
-                    sb.Append(",\"nestedModules\":[");
-                    for (int k = 0; k < p.NestedModules.Count; k++)
-                    {
-                        if (k > 0) sb.Append(",");
-                        NpmSubModuleItem sub = p.NestedModules[k];
-                        sb.Append("{");
-                        sb.Append("\"name\":\"").Append(HttpServer.EscapeJson(sub.Name)).Append("\"");
-                        sb.Append(",\"version\":\"").Append(HttpServer.EscapeJson(sub.Version)).Append("\"");
-                        sb.Append(",\"installPath\":\"").Append(HttpServer.EscapeJson(sub.InstallPath)).Append("\"");
-                        sb.Append(",\"size\":").Append(sub.Size);
-                        sb.Append("}");
-                    }
-                    sb.Append("]");
-                    sb.Append("}");
-                }
-                sb.Append("]}");
-
-                HttpServer.ServeJson(response, 200, sb.ToString());
-                return true;
-            }
-            else if (subPath == "open-path")
-            {
-                string path = request.QueryString["path"];
-                if (string.IsNullOrEmpty(path))
-                {
-                    HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_missing_path")) + "\"}");
-                    return true;
-                }
-
-                if (Directory.Exists(path) || File.Exists(path))
-                {
-                    try
-                    {
-                        Process.Start("explorer.exe", Directory.Exists(path) ? path : ("/select,\"" + path + "\""));
-                        Logger.Log(I18nManager.T("log_locate_in_explorer", path));
-                        HttpServer.ServeJson(response, 200, "{\"success\":true}");
-                    }
-                    catch (Exception ex)
-                    {
-                        HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(ex.Message) + "\"}");
-                    }
+                    respBody = Encoding.UTF8.GetBytes("{\"scanning\":" + (isScanning ? "true" : "false") + ",\"packages\":[],\"totalPkgSize\":0,\"cacacheSize\":0,\"npxSize\":0,\"logsSize\":0,\"registry\":\"\",\"npmRoot\":\"\",\"cacheDir\":\"\",\"npmrc\":\"\"}");
                 }
                 else
                 {
-                    HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_path_not_found")) + "\"}");
-                }
-                return true;
-            }
-            else if (subPath == "terminal")
-            {
-                string path = request.QueryString["path"];
-                if (string.IsNullOrEmpty(path))
-                {
-                    HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_missing_path")) + "\"}");
-                    return true;
-                }
+                    StringBuilder sbData = new StringBuilder();
+                    sbData.Append("{\"scanning\":").Append(isScanning ? "true" : "false");
+                    sbData.Append(",\"totalPkgSize\":").Append(res.TotalPkgSize);
+                    sbData.Append(",\"cacacheSize\":").Append(res.CacacheSize);
+                    sbData.Append(",\"npxSize\":").Append(res.NpxSize);
+                    sbData.Append(",\"logsSize\":").Append(res.LogsSize);
+                    sbData.Append(",\"nodeVersion\":\"").Append(EscapeJson(res.NodeVersion)).Append("\"");
+                    sbData.Append(",\"nodePath\":\"").Append(EscapeJson(res.NodePath)).Append("\"");
+                    sbData.Append(",\"npmVersion\":\"").Append(EscapeJson(res.NpmVersion)).Append("\"");
+                    sbData.Append(",\"npmPath\":\"").Append(EscapeJson(res.NpmPath)).Append("\"");
+                    sbData.Append(",\"globalPrefix\":\"").Append(EscapeJson(res.GlobalPrefix)).Append("\"");
+                    sbData.Append(",\"globalBinDir\":\"").Append(EscapeJson(res.GlobalBinDir)).Append("\"");
+                    sbData.Append(",\"registry\":\"").Append(EscapeJson(res.RegistryUrl)).Append("\"");
+                    sbData.Append(",\"npmRoot\":\"").Append(EscapeJson(res.NpmRoot)).Append("\"");
+                    sbData.Append(",\"cacheDir\":\"").Append(EscapeJson(res.CacheDir)).Append("\"");
+                    sbData.Append(",\"logsDir\":\"").Append(EscapeJson(res.LogsDir)).Append("\"");
+                    sbData.Append(",\"npxDir\":\"").Append(EscapeJson(res.NpxDir)).Append("\"");
+                    sbData.Append(",\"cacacheDir\":\"").Append(EscapeJson(res.CacacheDir)).Append("\"");
+                    sbData.Append(",\"npmrc\":\"").Append(EscapeJson(res.NpmrcPath)).Append("\"");
+                    sbData.Append(",\"npmrcContent\":\"").Append(EscapeJson(res.NpmrcContent)).Append("\"");
 
-                string targetDir = Directory.Exists(path) ? path : Path.GetDirectoryName(path);
-                if (!string.IsNullOrEmpty(targetDir) && Directory.Exists(targetDir))
+                    sbData.Append(",\"npmrcConfigs\":{");
+                    int cfgIdx = 0;
+                    foreach (var kvp in res.NpmrcConfigs)
+                    {
+                        if (cfgIdx++ > 0) sbData.Append(",");
+                        sbData.Append("\"").Append(EscapeJson(kvp.Key)).Append("\":\"").Append(EscapeJson(kvp.Value)).Append("\"");
+                    }
+                    sbData.Append("}");
+
+                    sbData.Append(",\"packages\":[");
+                    for (int i = 0; i < res.Packages.Count; i++)
+                    {
+                        if (i > 0) sbData.Append(",");
+                        NpmPackageItem p = res.Packages[i];
+                        sbData.Append("{");
+                        sbData.Append("\"name\":\"").Append(EscapeJson(p.Name)).Append("\"");
+                        sbData.Append(",\"version\":\"").Append(EscapeJson(p.Version)).Append("\"");
+                        sbData.Append(",\"description\":\"").Append(EscapeJson(p.Description)).Append("\"");
+                        sbData.Append(",\"license\":\"").Append(EscapeJson(p.License)).Append("\"");
+                        sbData.Append(",\"author\":\"").Append(EscapeJson(p.Author)).Append("\"");
+                        sbData.Append(",\"homepage\":\"").Append(EscapeJson(p.Homepage)).Append("\"");
+                        sbData.Append(",\"bin\":\"").Append(EscapeJson(p.Bin)).Append("\"");
+                        sbData.Append(",\"size\":").Append(p.Size);
+                        sbData.Append(",\"lastModified\":\"").Append(EscapeJson(p.LastModified.ToString("yyyy-MM-dd HH:mm"))).Append("\"");
+                        sbData.Append(",\"installPath\":\"").Append(EscapeJson(p.InstallPath)).Append("\"");
+                        sbData.Append(",\"depsCount\":").Append(p.DepsCount);
+                        sbData.Append(",\"declaredDependencies\":{");
+                        int depIdx = 0;
+                        foreach (var d in p.DeclaredDependencies)
+                        {
+                            if (depIdx++ > 0) sbData.Append(",");
+                            sbData.Append("\"").Append(EscapeJson(d.Key)).Append("\":\"").Append(EscapeJson(d.Value)).Append("\"");
+                        }
+                        sbData.Append("}");
+                        sbData.Append(",\"nestedModules\":[");
+                        for (int k = 0; k < p.NestedModules.Count; k++)
+                        {
+                            if (k > 0) sbData.Append(",");
+                            NpmSubModuleItem sub = p.NestedModules[k];
+                            sbData.Append("{");
+                            sbData.Append("\"name\":\"").Append(EscapeJson(sub.Name)).Append("\"");
+                            sbData.Append(",\"version\":\"").Append(EscapeJson(sub.Version)).Append("\"");
+                            sbData.Append(",\"installPath\":\"").Append(EscapeJson(sub.InstallPath)).Append("\"");
+                            sbData.Append(",\"size\":").Append(sub.Size);
+                            sbData.Append("}");
+                        }
+                        sbData.Append("]");
+                        sbData.Append("}");
+                    }
+                    sbData.Append("]}");
+                    respBody = Encoding.UTF8.GetBytes(sbData.ToString());
+                }
+            }
+            else if (path == "open-path")
+            {
+                string p = query.ContainsKey("path") ? query["path"] : "";
+                if (string.IsNullOrEmpty(p))
                 {
-                    try
+                    status = 400;
+                    respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"message\":\"" + EscapeJson(T("api_missing_path")) + "\"}");
+                }
+                else if (Directory.Exists(p) || File.Exists(p))
+                {
+                    Process.Start("explorer.exe", Directory.Exists(p) ? p : ("/select,\"" + p + "\""));
+                    respBody = Encoding.UTF8.GetBytes("{\"success\":true}");
+                }
+                else
+                {
+                    status = 404;
+                    respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"message\":\"" + EscapeJson(T("api_path_not_found")) + "\"}");
+                }
+            }
+            else if (path == "terminal")
+            {
+                string p = query.ContainsKey("path") ? query["path"] : "";
+                if (string.IsNullOrEmpty(p))
+                {
+                    status = 400;
+                    respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"message\":\"" + EscapeJson(T("api_missing_path")) + "\"}");
+                }
+                else
+                {
+                    string targetDir = Directory.Exists(p) ? p : Path.GetDirectoryName(p);
+                    if (!string.IsNullOrEmpty(targetDir) && Directory.Exists(targetDir))
                     {
                         ProcessStartInfo psi = new ProcessStartInfo
                         {
@@ -976,103 +1104,134 @@ namespace LocalDiskServer
                             UseShellExecute = true
                         };
                         Process.Start(psi);
-                        Logger.Log(I18nManager.T("log_open_terminal", "PowerShell", targetDir));
-                        HttpServer.ServeJson(response, 200, "{\"success\":true}");
+                        respBody = Encoding.UTF8.GetBytes("{\"success\":true}");
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(ex.Message) + "\"}");
+                        status = 404;
+                        respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"message\":\"" + EscapeJson(T("api_path_not_found")) + "\"}");
                     }
                 }
-                else
-                {
-                    HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_path_not_found")) + "\"}");
-                }
-                return true;
             }
-            else if (subPath == "refresh")
+            else if (path == "refresh")
             {
                 TriggerNpmScanAsync(true);
-                HttpServer.ServeJson(response, 200, "{\"success\":true,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_gradle_scan_started")) + "\"}");
-                return true;
+                respBody = Encoding.UTF8.GetBytes("{\"success\":true,\"message\":\"" + EscapeJson(T("api_gradle_scan_started")) + "\"}");
             }
-            else if (subPath == "clean-logs")
+            else if (path == "clean-logs")
             {
                 string cacheDir = GetDefaultNpmCacheDir();
                 string logsDir = Path.Combine(cacheDir, "_logs");
                 if (Directory.Exists(logsDir))
                 {
-                    try
-                    {
-                        Directory.Delete(logsDir, true);
-                        Logger.Log(I18nManager.T("log_npm_clean_logs", logsDir));
-                        TriggerNpmScanAsync(true);
-                        HttpServer.ServeJson(response, 200, "{\"success\":true,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("npm_clean_success")) + "\"}");
-                    }
-                    catch (Exception ex)
-                    {
-                        HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("npm_clean_fail", ex.Message)) + "\"}");
-                    }
+                    Directory.Delete(logsDir, true);
+                    TriggerNpmScanAsync(true);
                 }
-                else
-                {
-                    HttpServer.ServeJson(response, 200, "{\"success\":true,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("npm_clean_success")) + "\"}");
-                }
-                return true;
+                respBody = Encoding.UTF8.GetBytes("{\"success\":true,\"message\":\"" + EscapeJson(T("npm_clean_success")) + "\"}");
             }
-            else if (subPath == "clean-npx")
+            else if (path == "clean-npx")
             {
                 string cacheDir = GetDefaultNpmCacheDir();
                 string npxDir = Path.Combine(cacheDir, "_npx");
                 if (Directory.Exists(npxDir))
                 {
-                    try
-                    {
-                        Directory.Delete(npxDir, true);
-                        Logger.Log(I18nManager.T("log_npm_clean_npx", npxDir));
-                        TriggerNpmScanAsync(true);
-                        HttpServer.ServeJson(response, 200, "{\"success\":true,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("npm_clean_success")) + "\"}");
-                    }
-                    catch (Exception ex)
-                    {
-                        HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("npm_clean_fail", ex.Message)) + "\"}");
-                    }
+                    Directory.Delete(npxDir, true);
+                    TriggerNpmScanAsync(true);
+                }
+                respBody = Encoding.UTF8.GetBytes("{\"success\":true,\"message\":\"" + EscapeJson(T("npm_clean_success")) + "\"}");
+            }
+            else if (path == "pkg-json")
+            {
+                string p = query.ContainsKey("path") ? query["path"] : "";
+                if (string.IsNullOrEmpty(p))
+                {
+                    status = 400;
+                    respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"message\":\"" + EscapeJson(T("api_missing_path")) + "\"}");
                 }
                 else
                 {
-                    HttpServer.ServeJson(response, 200, "{\"success\":true,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("npm_clean_success")) + "\"}");
-                }
-                return true;
-            }
-            else if (subPath == "pkg-json")
-            {
-                string path = request.QueryString["path"];
-                if (string.IsNullOrEmpty(path))
-                {
-                    HttpServer.ServeJson(response, 400, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_missing_path")) + "\"}");
-                    return true;
-                }
-                string pkgJson = Path.Combine(path, "package.json");
-                if (File.Exists(pkgJson))
-                {
-                    try
+                    string pkgJson = Path.Combine(p, "package.json");
+                    if (File.Exists(pkgJson))
                     {
                         string content = File.ReadAllText(pkgJson, Encoding.UTF8);
-                        HttpServer.ServeJson(response, 200, "{\"success\":true,\"content\":\"" + HttpServer.EscapeJson(content) + "\"}");
+                        respBody = Encoding.UTF8.GetBytes("{\"success\":true,\"content\":\"" + EscapeJson(content) + "\"}");
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        HttpServer.ServeJson(response, 500, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(ex.Message) + "\"}");
+                        status = 404;
+                        respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"message\":\"" + EscapeJson(T("api_file_not_found")) + "\"}");
                     }
                 }
-                else
-                {
-                    HttpServer.ServeJson(response, 404, "{\"success\":false,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("api_file_not_found")) + "\"}");
-                }
-                return true;
             }
-
-            return false;
+            else
+            {
+                status = 404;
+                respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"error\":\"unknown path: " + path + "\"}");
+            }
         }
+        catch (Exception ex)
+        {
+            status = 500;
+            respBody = Encoding.UTF8.GetBytes("{\"success\":false,\"error\":\"" + EscapeJson(ex.Message) + "\"}");
+        }
+
+        Dictionary<string, object> respHead = new Dictionary<string, object>();
+        respHead["id"] = id;
+        respHead["status"] = status;
+        respHead["type"] = contentType;
+        respHead["bodyLen"] = respBody == null ? 0 : respBody.Length;
+        WriteFrame(stdout, T_RESPONSE_HEAD, Encoding.UTF8.GetBytes(json.Serialize(respHead)));
+
+        if (respBody != null && respBody.Length > 0)
+        {
+            int off = 0;
+            while (off < respBody.Length)
+            {
+                int n = Math.Min(CHUNK, respBody.Length - off);
+                byte[] frame = new byte[4 + n];
+                frame[0] = (byte)(id & 0xFF);
+                frame[1] = (byte)((id >> 8) & 0xFF);
+                frame[2] = (byte)((id >> 16) & 0xFF);
+                frame[3] = (byte)((id >> 24) & 0xFF);
+                Array.Copy(respBody, off, frame, 4, n);
+                WriteFrame(stdout, T_BIN_CHUNK, frame);
+                off += n;
+            }
+        }
+    }
+
+    private static void WriteFrame(Stream s, byte type, byte[] payload)
+    {
+        byte[] head = new byte[5];
+        head[0] = type;
+        head[1] = (byte)(payload.Length & 0xFF);
+        head[2] = (byte)((payload.Length >> 8) & 0xFF);
+        head[3] = (byte)((payload.Length >> 16) & 0xFF);
+        head[4] = (byte)((payload.Length >> 24) & 0xFF);
+        s.Write(head, 0, 5);
+        if (payload.Length > 0) s.Write(payload, 0, payload.Length);
+        s.Flush();
+    }
+
+    private static void ReadFrame(Stream s, out byte type, out byte[] payload)
+    {
+        byte[] head = ReadExactly(s, 5);
+        int len = head[1] | (head[2] << 8) | (head[3] << 16) | (head[4] << 24);
+        if (len < 0 || len > 16 * 1024 * 1024) throw new IOException("bad frame length");
+        type = head[0];
+        payload = len == 0 ? new byte[0] : ReadExactly(s, len);
+    }
+
+    private static byte[] ReadExactly(Stream s, int count)
+    {
+        byte[] buf = new byte[count];
+        int off = 0;
+        while (off < count)
+        {
+            int n = s.Read(buf, off, count - off);
+            if (n <= 0) throw new EndOfStreamException();
+            off += n;
+        }
+        return buf;
     }
 }

@@ -2889,13 +2889,32 @@ function loadSettingsPlugins() {
         .then(res => res.json())
         .then(data => {
             if (data && data.success === false) {
-                container.innerHTML = `<div style='color: var(--danger, #e74c3c); padding: 10px; text-align: center;'>${escapeHtml(data.message || data.error || 'Error')}</div>`;
+                container.innerHTML = `<div style='color: var(--danger, #e74c3c); padding: 12px; text-align: center;'>${escapeHtml(data.message || data.error || 'Error')}</div>`;
                 return;
             }
 
             const list = Array.isArray(data) ? data : ((data && data.plugins) ? data.plugins : []);
+            
+            // 更新 Badge 徽章与统计信息
+            const badgeEl = document.getElementById('settings-plugins-badge');
+            const statEl = document.getElementById('settings-plugins-stat');
+            const enabledCount = list.filter(p => p.enabled).length;
+
+            if (badgeEl) {
+                badgeEl.textContent = list.length;
+                badgeEl.style.display = list.length > 0 ? 'inline-flex' : 'none';
+            }
+            if (statEl) {
+                statEl.textContent = `${list.length} 个插件 · ${enabledCount} 个已启用`;
+            }
+
             if (list.length === 0) {
-                container.innerHTML = `<div style='text-align: center; color: var(--text-muted); padding: 15px; font-size: 0.9rem;'>${window.t('settings_plugin_empty') || 'No plugins found'}</div>`;
+                container.innerHTML = `
+                <div class='settings-plugins-empty'>
+                    <div class='settings-plugins-empty-icon'>🔌</div>
+                    <div class='settings-plugins-empty-text'>${escapeHtml(window.t('settings_plugin_empty') || '暂无安装任何插件')}</div>
+                    <button type='button' class='settings-btn-sub' onclick='openPluginsFolder()'>📂 ${escapeHtml(window.t('settings_plugin_btn_open_dir') || '打开插件目录')}</button>
+                </div>`;
                 return;
             }
 
@@ -2903,35 +2922,35 @@ function loadSettingsPlugins() {
             list.forEach(p => {
                 const isEnabled = p.enabled;
                 const statusBadge = isEnabled
-                    ? `<span class='plugin-status-badge status-active'>${window.t('settings_plugin_status_enabled') || 'Enabled'}</span>`
-                    : `<span class='plugin-status-badge status-disabled'>${window.t('settings_plugin_status_disabled') || 'Disabled'}</span>`;
+                    ? `<span class='plugin-status-badge status-active'>${window.t('settings_plugin_status_enabled') || '已启用'}</span>`
+                    : `<span class='plugin-status-badge status-disabled'>${window.t('settings_plugin_status_disabled') || '已禁用'}</span>`;
                 
-                const entryBtn = isEnabled
-                    ? `<a href='/plugin/${encodeURIComponent(p.id)}' target='_blank' class='settings-btn-sub' style='text-decoration: none; padding: 2px 8px; font-size: 0.8rem; display: inline-flex; align-items: center;'>${window.t('settings_plugin_entry_link') || 'Open'} ↗</a>`
+                const entryBtn = (isEnabled && p.hasPage)
+                    ? `<a href='/plugin/${encodeURIComponent(p.id)}' target='_blank' class='plugin-open-btn'>${window.t('settings_plugin_entry_link') || '打开'} ↗</a>`
                     : '';
 
                 html += `
-                <div class='settings-plugin-card' data-id='${escapeHtml(p.id)}' style='display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 6px;'>
-                    <div style='display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1;'>
-                        <div style='font-size: 1.5rem; line-height: 1;'>${escapeHtml(p.icon || '🧩')}</div>
-                        <div style='min-width: 0; flex: 1;'>
-                            <div style='display: flex; align-items: center; gap: 6px; flex-wrap: wrap;'>
-                                <span style='font-weight: 600; font-size: 0.95rem; color: var(--text-color);'>${escapeHtml(p.name)}</span>
-                                <span style='font-size: 0.75rem; color: var(--text-muted); background: var(--container-bg); border: 1px solid var(--border-color); border-radius: 4px; padding: 1px 5px;'>v${escapeHtml(p.version)}</span>
+                <div class='settings-plugin-card' data-id='${escapeHtml(p.id)}'>
+                    <div class='plugin-card-main'>
+                        <div class='plugin-icon-box'>${escapeHtml(p.icon || '🧩')}</div>
+                        <div class='plugin-content'>
+                            <div class='plugin-title-row'>
+                                <span class='plugin-name'>${escapeHtml(p.name)}</span>
+                                <span class='plugin-version-badge'>v${escapeHtml(p.version || '1.0.0')}</span>
                                 ${statusBadge}
                             </div>
-                            <div style='font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' title='${escapeHtml(p.description)}'>
+                            <div class='plugin-desc' title='${escapeHtml(p.description || '')}'>
                                 ${escapeHtml(p.description || '')}
                             </div>
                         </div>
                     </div>
-                    <div style='display: flex; align-items: center; gap: 8px; margin-left: 12px; flex-shrink: 0;'>
+                    <div class='plugin-actions-group'>
                         ${entryBtn}
-                        <label class='switch' title='${isEnabled ? (window.t('settings_plugin_status_enabled') || 'Enabled') : (window.t('settings_plugin_status_disabled') || 'Disabled')}' style='margin: 0;'>
+                        <label class='switch' title='${isEnabled ? (window.t('settings_plugin_status_enabled') || '已启用') : (window.t('settings_plugin_status_disabled') || '已禁用')}'>
                             <input type='checkbox' ${isEnabled ? 'checked' : ''} onchange='togglePlugin("${escapeHtml(p.id)}", this.checked)'>
                             <span class='slider round'></span>
                         </label>
-                        <button type='button' class='settings-btn-op' onclick='uninstallPlugin("${escapeHtml(p.id)}", "${escapeHtml(p.name)}")' style='color: #e74c3c; border-color: rgba(231,76,60,0.3); padding: 3px 8px; font-size: 0.8rem;' title='${window.t('settings_plugin_uninstall') || 'Uninstall'}'>🗑️</button>
+                        <button type='button' class='plugin-del-btn' onclick='uninstallPlugin("${escapeHtml(p.id)}", "${escapeHtml(p.name)}")' title='${window.t('settings_plugin_uninstall') || '卸载'}'>🗑️</button>
                     </div>
                 </div>`;
             });
@@ -2939,7 +2958,7 @@ function loadSettingsPlugins() {
             container.innerHTML = html;
         })
         .catch(err => {
-            container.innerHTML = `<div style='color: var(--danger, #e74c3c); padding: 10px; text-align: center;'>Network error: ${escapeHtml(err.message)}</div>`;
+            container.innerHTML = `<div style='color: var(--danger, #e74c3c); padding: 12px; text-align: center;'>Network error: ${escapeHtml(err.message)}</div>`;
         });
 }
 

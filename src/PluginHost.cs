@@ -62,6 +62,7 @@ namespace LocalDiskServer
             public string DirPath;
             public string ExePath;
             public string IndexHtmlPath;
+            public string Layout;
         }
 
         public static void Initialize()
@@ -150,6 +151,7 @@ namespace LocalDiskServer
             info.Concurrency = GetInt(m, "concurrency", 4);
             if (info.Concurrency < 1) info.Concurrency = 1;
             info.Warmup = GetBool(m, "warmup");
+            info.Layout = GetStr(m, "layout");
 
             if (string.IsNullOrEmpty(info.Id) || string.IsNullOrEmpty(info.Name))
             {
@@ -161,16 +163,6 @@ namespace LocalDiskServer
             {
                 Logger.Log(I18nManager.T("log_plugin_load_failed", info.Id, "invalid id"));
                 return null;
-            }
-
-            string[] reserved = new string[] { "gradle", "npm", "pnpm", "maven" };
-            foreach (string r in reserved)
-            {
-                if (string.Equals(info.Id, r, StringComparison.OrdinalIgnoreCase))
-                {
-                    Logger.Log(I18nManager.T("log_plugin_load_failed", info.Id, "reserved id"));
-                    return null;
-                }
             }
 
             info.ExePath = Path.Combine(dir, "backend.exe");
@@ -198,6 +190,7 @@ namespace LocalDiskServer
                 Dictionary<string, string> dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 ParsePluginIni(File.ReadAllText(file, Encoding.UTF8), dict);
                 I18nManager.RegisterStrings(langCode, dict, prefix);
+                I18nManager.RegisterStrings(langCode, dict, "");
             }
         }
 
@@ -626,6 +619,25 @@ namespace LocalDiskServer
         public static bool TryServePage(string rawPath, System.Net.HttpListenerRequest request, System.Net.HttpListenerResponse response)
         {
             if (rawPath == null) return false;
+
+            // 官方生态插件别名兼容路由
+            if (rawPath.Equals("gradle", StringComparison.OrdinalIgnoreCase))
+            {
+                return ServePluginPageDirect("gradle", "", request, response);
+            }
+            if (rawPath.Equals("maven", StringComparison.OrdinalIgnoreCase))
+            {
+                return ServePluginPageDirect("maven", "", request, response);
+            }
+            if (rawPath.Equals("npm", StringComparison.OrdinalIgnoreCase))
+            {
+                return ServePluginPageDirect("npm", "", request, response);
+            }
+            if (rawPath.Equals("pnpm", StringComparison.OrdinalIgnoreCase))
+            {
+                return ServePluginPageDirect("pnpm", "", request, response);
+            }
+
             if (!rawPath.StartsWith("plugin/", StringComparison.OrdinalIgnoreCase)) return false;
 
             string rest = rawPath.Substring(7);
@@ -633,6 +645,11 @@ namespace LocalDiskServer
             string id = slash < 0 ? rest : rest.Substring(0, slash);
             string subPath = slash < 0 ? "" : rest.Substring(slash + 1);
 
+            return ServePluginPageDirect(id, subPath, request, response);
+        }
+
+        public static bool ServePluginPageDirect(string id, string subPath, System.Net.HttpListenerRequest request, System.Net.HttpListenerResponse response)
+        {
             PluginRuntime rt;
             if (!runtimes.TryGetValue(id, out rt))
             {
@@ -655,9 +672,23 @@ namespace LocalDiskServer
                 if (subPath.Length == 0)
                 {
                     // 主页面: 插件返回片段, 主进程统一包装全站 header/footer
-                    html = HttpServer.GetHtmlHeader(rt.Info.Name, "");
-                    html += Encoding.UTF8.GetString(resp.Body);
-                    html += HttpServer.GetHtmlFooter();
+                    bool isExplorerLayout = string.Equals(rt.Info.Layout, "explorer", StringComparison.OrdinalIgnoreCase) ||
+                        rt.Info.Id == "gradle" || rt.Info.Id == "maven" || rt.Info.Id == "npm" || rt.Info.Id == "pnpm";
+
+                    if (isExplorerLayout)
+                    {
+                        html = HttpServer.GetHtmlHeader(rt.Info.Name, "/" + rt.Info.Id, "layout-explorer");
+                        html += "<script>const currentView = '" + rt.Info.Id + "';</script>";
+                        html += FileExplorer.RenderSidebar("/" + rt.Info.Id, I18nManager.CurrentLanguage);
+                        html += Encoding.UTF8.GetString(resp.Body);
+                        html += HttpServer.GetHtmlFooter();
+                    }
+                    else
+                    {
+                        html = HttpServer.GetHtmlHeader(rt.Info.Name, "");
+                        html += Encoding.UTF8.GetString(resp.Body);
+                        html += HttpServer.GetHtmlFooter();
+                    }
                     WriteBytes(response, resp.Status >= 200 && resp.Status < 400 ? 200 : resp.Status, "text/html; charset=utf-8", Encoding.UTF8.GetBytes(html));
                 }
                 else
@@ -676,9 +707,23 @@ namespace LocalDiskServer
                 {
                     try
                     {
-                        html = HttpServer.GetHtmlHeader(rt.Info.Name, "");
-                        html += File.ReadAllText(rt.Info.IndexHtmlPath, Encoding.UTF8);
-                        html += HttpServer.GetHtmlFooter();
+                        bool isExplorerLayout = string.Equals(rt.Info.Layout, "explorer", StringComparison.OrdinalIgnoreCase) ||
+                            rt.Info.Id == "gradle" || rt.Info.Id == "maven" || rt.Info.Id == "npm" || rt.Info.Id == "pnpm";
+
+                        if (isExplorerLayout)
+                        {
+                            html = HttpServer.GetHtmlHeader(rt.Info.Name, "/" + rt.Info.Id, "layout-explorer");
+                            html += "<script>const currentView = '" + rt.Info.Id + "';</script>";
+                            html += FileExplorer.RenderSidebar("/" + rt.Info.Id, I18nManager.CurrentLanguage);
+                            html += File.ReadAllText(rt.Info.IndexHtmlPath, Encoding.UTF8);
+                            html += HttpServer.GetHtmlFooter();
+                        }
+                        else
+                        {
+                            html = HttpServer.GetHtmlHeader(rt.Info.Name, "");
+                            html += File.ReadAllText(rt.Info.IndexHtmlPath, Encoding.UTF8);
+                            html += HttpServer.GetHtmlFooter();
+                        }
                         WriteBytes(response, 200, "text/html; charset=utf-8", Encoding.UTF8.GetBytes(html));
                         return true;
                     }
@@ -698,6 +743,24 @@ namespace LocalDiskServer
                 return HandleManagementApi(rawPath, request, response);
             }
 
+            // 官方生态插件 API 别名兼容路由
+            if (rawPath.StartsWith("api/gradle/", StringComparison.OrdinalIgnoreCase))
+            {
+                return ServePluginApiDirect("gradle", rawPath.Substring(11), request, response);
+            }
+            if (rawPath.StartsWith("api/maven/", StringComparison.OrdinalIgnoreCase))
+            {
+                return ServePluginApiDirect("maven", rawPath.Substring(10), request, response);
+            }
+            if (rawPath.StartsWith("api/npm/", StringComparison.OrdinalIgnoreCase))
+            {
+                return ServePluginApiDirect("npm", rawPath.Substring(8), request, response);
+            }
+            if (rawPath.StartsWith("api/pnpm/", StringComparison.OrdinalIgnoreCase))
+            {
+                return ServePluginApiDirect("pnpm", rawPath.Substring(9), request, response);
+            }
+
             if (!rawPath.StartsWith("api/plugin/", StringComparison.OrdinalIgnoreCase)) return false;
 
             string rest = rawPath.Substring(11);
@@ -705,6 +768,11 @@ namespace LocalDiskServer
             string id = slash < 0 ? rest : rest.Substring(0, slash);
             string subPath = slash < 0 ? "" : rest.Substring(slash + 1);
 
+            return ServePluginApiDirect(id, subPath, request, response);
+        }
+
+        public static bool ServePluginApiDirect(string id, string subPath, System.Net.HttpListenerRequest request, System.Net.HttpListenerResponse response)
+        {
             PluginRuntime rt;
             if (!runtimes.TryGetValue(id, out rt))
             {

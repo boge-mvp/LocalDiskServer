@@ -1,0 +1,13 @@
+{
+  "id": "gradle",
+  "name": "Gradle 依赖管理",
+  "version": "1.0.0",
+  "author": "LocalDiskServer",
+  "description": "本地 Gradle 缓存依赖、Wrapper 发行版及多平台 (KMP) 模块分析管理",
+  "icon": "☕",
+  "order": 10,
+  "timeout": 15,
+  "concurrency": 4,
+  "warmup": true,
+  "layout": "explorer"
+}

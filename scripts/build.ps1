@@ -126,7 +126,7 @@ if (Test-Path $pluginsDir) {
             $pluginOut = Join-Path $pluginDir "backend.exe"
             Write-Host ""
             Write-Host "[plugin] 编译 $($_.Name)..." -ForegroundColor Cyan
-            $pluginArgs = @("/target:exe", "/optimize+", "/utf8output", "/out:`"$pluginOut`"", "/r:System.dll", "/r:System.Core.dll", "/r:System.Web.dll", "`"$backendCs`"")
+            $pluginArgs = @("/target:exe", "/optimize+", "/utf8output", "/out:`"$pluginOut`"", "/r:System.dll", "/r:System.Core.dll", "/r:System.Web.dll", "/r:System.Xml.dll", "`"$backendCs`"")
             $pp = Start-Process -FilePath $cscPath -ArgumentList $pluginArgs -NoNewWindow -Wait -PassThru
             if ($pp.ExitCode -ne 0 -or -not (Test-Path $pluginOut)) {
                 Write-Host " [×] 插件 $($_.Name) 编译失败，退出代码: $($pp.ExitCode)" -ForegroundColor Red

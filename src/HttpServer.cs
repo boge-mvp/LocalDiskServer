@@ -217,31 +217,7 @@ namespace LocalDiskServer
                     return;
                 }
 
-                if (rawPath.Equals("gradle", StringComparison.OrdinalIgnoreCase))
-                {
-                    GradleExplorer.ServeGradleDashboard(response);
-                    return;
-                }
-
-                if (rawPath.Equals("npm", StringComparison.OrdinalIgnoreCase))
-                {
-                    NpmExplorer.ServeNpmDashboard(response);
-                    return;
-                }
-
-                if (rawPath.Equals("pnpm", StringComparison.OrdinalIgnoreCase))
-                {
-                    PnpmExplorer.ServePnpmDashboard(response);
-                    return;
-                }
-
-                if (rawPath.Equals("maven", StringComparison.OrdinalIgnoreCase))
-                {
-                    MavenExplorer.ServeMavenDashboard(response);
-                    return;
-                }
-
-                // 插件页面路由: /plugin/<id> 与 /plugin/<id>/...
+                // 插件页面路由: /plugin/<id> 与兼容路由 /gradle, /maven, /npm, /pnpm
                 if (PluginHost.TryServePage(rawPath, request, response))
                 {
                     return;
@@ -258,7 +234,8 @@ namespace LocalDiskServer
                     string view = request.QueryString["view"];
                     if ("gradle".Equals(view, StringComparison.OrdinalIgnoreCase))
                     {
-                        GradleExplorer.ServeGradleDashboard(response);
+                        PluginHost.ServePluginPageDirect("gradle", "", request, response);
+                        return;
                     }
                     else
                     {
@@ -321,10 +298,6 @@ namespace LocalDiskServer
             {
                 if (ServerApplicationContext.HandleSettingsApi(rawPath, request, response)) return;
                 if (Logger.HandleApi(rawPath, request, response)) return;
-                if (NpmExplorer.HandleApi(rawPath, request, response)) return;
-                if (PnpmExplorer.HandleApi(rawPath, request, response)) return;
-                if (MavenExplorer.HandleApi(rawPath, request, response)) return;
-                if (GradleExplorer.HandleApi(rawPath, request, response)) return;
                 if (FileExplorer.HandleApi(rawPath, request, response)) return;
                 if (PluginHost.HandleApi(rawPath, request, response)) return;
 
@@ -747,92 +720,7 @@ namespace LocalDiskServer
             }
             sb.Append("</div>");
 
-            // Section 2: Developer Ecosystem & Package Repositories (Only when enabled)
-            if (ServerApplicationContext.enable_dev_ecosystem)
-            {
-                sb.Append("<hr style='border: 0; border-top: 1px solid var(--border-color); margin: 16px 0;'>");
-                sb.AppendFormat("<h2>📦 {0}</h2>", I18nManager.T("lobby_dev_ecosystem_title"));
-                sb.Append("<div class='grid'>");
-
-                // 1. Gradle (Ready)
-                sb.AppendFormat(
-                    "<a href='/?view=gradle' class='card drive-card' data-path='/?view=gradle' data-type='dir' title='{0} ({1}) - {2}'>" +
-                    "  <div class='icon-wrapper' style='font-size: 2.2rem; display: flex; align-items: center; justify-content: center;'>☕</div>" +
-                    "  <div class='card-info'>" +
-                    "    <div class='card-title-row'>" +
-                    "      <span class='title title-text' title='{0}'>{0}</span>" +
-                    "      <span class='dev-badge ready'>{1}</span>" +
-                    "    </div>" +
-                    "    <div class='desc' title='{2}'>{2}</div>" +
-                    "  </div>" +
-                    "</a>",
-                    I18nManager.T("lobby_gradle_title"), I18nManager.T("tag_ready"), I18nManager.T("lobby_gradle_desc")
-                );
-
-                // 2. Maven (Ready)
-                sb.AppendFormat(
-                    "<a href='/maven' class='card drive-card dev-card' title='{0} ({1}) - {2}'>" +
-                    "  <div class='icon-wrapper'>{3}</div>" +
-                    "  <div class='card-info'>" +
-                    "    <div class='card-title-row'>" +
-                    "      <span class='title title-text' title='{0}'>{0}</span>" +
-                    "      <span class='dev-badge ready'>{1}</span>" +
-                    "    </div>" +
-                    "    <div class='desc' title='{2}'>{2}</div>" +
-                    "  </div>" +
-                    "</a>",
-                    I18nManager.T("lobby_maven_title"), I18nManager.T("tag_ready"), I18nManager.T("lobby_maven_desc"), GetMavenSvg()
-                );
-
-                // 3. NPM (Ready)
-                sb.AppendFormat(
-                    "<a href='/npm' class='card drive-card' title='{1} ({2}) - {3}'>" +
-                    "  <div class='icon-wrapper'>{0}</div>" +
-                    "  <div class='card-info'>" +
-                    "    <div class='card-title-row'>" +
-                    "      <span class='title title-text' title='{1}'>{1}</span>" +
-                    "      <span class='dev-badge ready'>{2}</span>" +
-                    "    </div>" +
-                    "    <div class='desc' title='{3}'>{3}</div>" +
-                    "  </div>" +
-                    "</a>",
-                    GetNpmSvg(), I18nManager.T("lobby_npm_title"), I18nManager.T("tag_ready"), I18nManager.T("lobby_npm_desc")
-                );
-
-                // 4. PNPM (Ready)
-                sb.AppendFormat(
-                    "<a href='/pnpm' class='card drive-card' title='{1} ({2}) - {3}'>" +
-                    "  <div class='icon-wrapper'>{0}</div>" +
-                    "  <div class='card-info'>" +
-                    "    <div class='card-title-row'>" +
-                    "      <span class='title title-text' title='{1}'>{1}</span>" +
-                    "      <span class='dev-badge ready'>{2}</span>" +
-                    "    </div>" +
-                    "    <div class='desc' title='{3}'>{3}</div>" +
-                    "  </div>" +
-                    "</a>",
-                    GetPnpmSvg(), I18nManager.T("lobby_pnpm_title"), I18nManager.T("tag_ready"), I18nManager.T("lobby_pnpm_desc")
-                );
-
-                // 5. Android (In Plan)
-                sb.AppendFormat(
-                    "<div class='card drive-card dev-card-disabled' style='opacity: 0.85; cursor: default;' title='{1} ({2}) - {3}'>" +
-                    "  <div class='icon-wrapper'>{0}</div>" +
-                    "  <div class='card-info'>" +
-                    "    <div class='card-title-row'>" +
-                    "      <span class='title title-text' title='{1}'>{1}</span>" +
-                    "      <span class='dev-badge plan'>{2}</span>" +
-                    "    </div>" +
-                    "    <div class='desc' title='{3}'>{3}</div>" +
-                    "  </div>" +
-                    "</div>",
-                    GetAndroidSvg(), I18nManager.T("lobby_android_title"), I18nManager.T("tag_coming_soon"), I18nManager.T("lobby_android_desc")
-                );
-
-                sb.Append("</div>");
-            }
-
-            // Section 2.5: Installed Plugins (independent of dev ecosystem)
+            // Section 2: Installed Plugins
             string pluginsLobbyHtml = PluginHost.GetLobbyCardsHtml();
             if (!string.IsNullOrEmpty(pluginsLobbyHtml))
             {

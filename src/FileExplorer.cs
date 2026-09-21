@@ -431,32 +431,7 @@ namespace LocalDiskServer
             sb.Append("      </div>");
             sb.Append("    </div>");
 
-            // 5. Developer Ecosystem Node (Only when enabled)
-            if (ServerApplicationContext.enable_dev_ecosystem)
-            {
-                sb.Append("    <div class='tree-node root-node' style='margin-top: 10px; border-top: 1px solid var(--border-color); padding-top: 8px;'>");
-                sb.Append("      <div class='tree-row'>");
-                sb.Append("        <span class='tree-arrow' onclick='toggleDevEcosystem(event)'>▼</span>");
-                sb.AppendFormat("        <span class='tree-label' style='font-weight: bold; cursor: pointer;' onclick='toggleDevEcosystem(event)'>📦 {0}</span>", I18nManager.T("nav_dev_ecosystem"));
-                sb.Append("      </div>");
-                sb.Append("      <div class='tree-children' id='children-dev-ecosystem'>");
-                
-                string gradleActive = (activePath == "/gradle" || activePath == "gradle" || activePath == "/?view=gradle") ? "active-node active" : "";
-                string npmActive = (activePath == "/npm" || activePath == "npm") ? "active-node active" : "";
-                string pnpmActive = (activePath == "/pnpm" || activePath == "pnpm") ? "active-node active" : "";
-
-                string mavenActive = (activePath == "/maven" || activePath == "maven") ? "active-node active" : "";
-
-                sb.AppendFormat("        <div class='tree-node'><div class='tree-row {1}'><a href='/?view=gradle' class='tree-link-inline {1}' style='color:inherit;'>☕ {0}</a></div></div>", I18nManager.T("nav_gradle"), gradleActive);
-                sb.AppendFormat("        <div class='tree-node'><div class='tree-row {1}'><a href='/maven' class='tree-link-inline {1}' style='color:inherit;'>🪶 {0}</a></div></div>", I18nManager.T("nav_maven"), mavenActive);
-                sb.AppendFormat("        <div class='tree-node'><div class='tree-row {1}'><a href='/npm' class='tree-link-inline {1}' style='color:inherit;'>📦 {0}</a></div></div>", I18nManager.T("nav_npm"), npmActive);
-                sb.AppendFormat("        <div class='tree-node'><div class='tree-row {1}'><a href='/pnpm' class='tree-link-inline {1}' style='color:inherit;'>⚡ {0}</a></div></div>", I18nManager.T("nav_pnpm"), pnpmActive);
-                sb.AppendFormat("        <div class='tree-node'><div class='tree-row' style='opacity: 0.65;' title='{1}'><span class='tree-link-inline' style='color:inherit; cursor: default;'>🤖 {0} <span class='dev-badge plan'>{1}</span></span></div></div>", I18nManager.T("nav_android"), I18nManager.T("tag_coming_soon"));
-                sb.Append("      </div>");
-                sb.Append("    </div>");
-            }
-
-            // 6. Plugin Nodes (独立模块，不受开发者生态开关限制，只要有可用插件即展示)
+            // 5. Plugin Nodes (包含扩展插件与解耦后的包仓库生态插件)
             string pluginNavNodes = PluginHost.GetNavNodesHtml(activePath);
             if (pluginNavNodes.Length > 0)
             {

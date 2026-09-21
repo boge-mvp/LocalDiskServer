@@ -209,15 +209,6 @@ namespace LocalDiskServer
                 }
             }
 
-            // 若启用了开发者生态管理，才启动后台线程异步扫描
-            if (enable_dev_ecosystem)
-            {
-                GradleExplorer.TriggerGradleScanAsync();
-                NpmExplorer.TriggerNpmScanAsync();
-                PnpmExplorer.TriggerPnpmScanAsync();
-                MavenExplorer.TriggerMavenScanAsync();
-            }
-
             // 加载插件系统（扫描 exe 同目录 plugins/，独立子进程隔离）
             PluginHost.Initialize();
         }
@@ -1192,14 +1183,8 @@ namespace LocalDiskServer
                     I18nManager.ForceExtractDefaultLocales();
                     I18nManager.LoadLanguage(I18nManager.CurrentLanguageCode);
 
-                    // 释放开发者生态内存缓存
-                    if (enable_dev_ecosystem)
-                    {
-                        GradleExplorer.ClearCacheAndReleaseResources();
-                        NpmExplorer.ClearCacheAndReleaseResources();
-                        PnpmExplorer.ClearCacheAndReleaseResources();
-                        MavenExplorer.ClearCacheAndReleaseResources();
-                    }
+                    // 释放/刷新插件运行态
+                    PluginHost.RescanPlugins();
 
                     Log(I18nManager.T("log_cache_cleared"));
                     HttpServer.ServeJson(response, 200, "{\"success\":true,\"message\":\"" + HttpServer.EscapeJson(I18nManager.T("settings_cache_cleared")) + "\"}");
@@ -1265,21 +1250,11 @@ namespace LocalDiskServer
                     {
                         enable_dev_ecosystem = newDevEcosystem;
                         if (devEcosystemMenuItem != null) devEcosystemMenuItem.Checked = enable_dev_ecosystem;
-                        if (enable_dev_ecosystem)
-                        {
-                            Log(I18nManager.T("log_dev_ecosystem_updated", I18nManager.T("common_enabled")));
-                GradleExplorer.TriggerGradleScanAsync();
-                NpmExplorer.TriggerNpmScanAsync();
-                PnpmExplorer.TriggerPnpmScanAsync();
-                MavenExplorer.TriggerMavenScanAsync();
-                        }
-                        else
-                        {
-                            Log(I18nManager.T("log_dev_ecosystem_updated", I18nManager.T("common_disabled")));
-                            GradleExplorer.ClearCacheAndReleaseResources();
-                            NpmExplorer.ClearCacheAndReleaseResources();
-                            PnpmExplorer.ClearCacheAndReleaseResources();
-                        }
+                        PluginHost.SetPluginEnabled("gradle", enable_dev_ecosystem);
+                        PluginHost.SetPluginEnabled("maven", enable_dev_ecosystem);
+                        PluginHost.SetPluginEnabled("npm", enable_dev_ecosystem);
+                        PluginHost.SetPluginEnabled("pnpm", enable_dev_ecosystem);
+                        Log(I18nManager.T("log_dev_ecosystem_updated", enable_dev_ecosystem ? I18nManager.T("common_enabled") : I18nManager.T("common_disabled")));
                     }
 
                     bool portChanged = (newPort != port || newHttpsPort != https_port || newUseHttps != use_https);
@@ -1363,21 +1338,11 @@ namespace LocalDiskServer
             SaveConfig();
             UpdateMenuTexts();
 
-            if (enable_dev_ecosystem)
-            {
-                Log(I18nManager.T("log_dev_ecosystem_updated", I18nManager.T("common_enabled")));
-                GradleExplorer.TriggerGradleScanAsync();
-                NpmExplorer.TriggerNpmScanAsync();
-                PnpmExplorer.TriggerPnpmScanAsync();
-                MavenExplorer.TriggerMavenScanAsync();
-            }
-            else
-            {
-                Log(I18nManager.T("log_dev_ecosystem_updated", I18nManager.T("common_disabled")));
-                GradleExplorer.ClearCacheAndReleaseResources();
-                NpmExplorer.ClearCacheAndReleaseResources();
-                PnpmExplorer.ClearCacheAndReleaseResources();
-            }
+            PluginHost.SetPluginEnabled("gradle", enable_dev_ecosystem);
+            PluginHost.SetPluginEnabled("maven", enable_dev_ecosystem);
+            PluginHost.SetPluginEnabled("npm", enable_dev_ecosystem);
+            PluginHost.SetPluginEnabled("pnpm", enable_dev_ecosystem);
+            Log(I18nManager.T("log_dev_ecosystem_updated", enable_dev_ecosystem ? I18nManager.T("common_enabled") : I18nManager.T("common_disabled")));
         }
 
         private void OpenPluginDirectory(object sender, EventArgs e)
