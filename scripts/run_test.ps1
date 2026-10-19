@@ -58,9 +58,13 @@ try {
     Write-Host " [√] 项目内测试端口验证全部通过！" -ForegroundColor Green
     Write-Host "==========================================" -ForegroundColor Green
 
-    # 5. 生命周期绑定：实例保持运行，用户输入任意字符后执行关闭流程
-    Write-Host "[4/4] 测试实例保持运行中: $testUrl (PID $($proc.Id))" -ForegroundColor Cyan
-    Read-Host ">>> 输入任意内容并回车，即可停止实例并清理环境"
+    # 5. 生命周期绑定：若处于交互终端则保持运行，输入任意字符后退出
+    Write-Host "[4/4] 测试实例运行正常: $testUrl (PID $($proc.Id))" -ForegroundColor Cyan
+    if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+        try {
+            Read-Host ">>> 输入任意内容并回车，即可停止实例并清理环境"
+        } catch { }
+    }
 }
 finally {
     # 6. 生命周期结束：终止测试实例并清理测试配置（回车或 Ctrl+C 均会执行）

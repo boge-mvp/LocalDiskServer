@@ -430,8 +430,6 @@ namespace LocalDiskServer
             footerHtml = footerHtml.Replace("{SETTINGS_HTTP_PORT}", I18nManager.T("settings_http_port"));
             footerHtml = footerHtml.Replace("{SETTINGS_HTTPS_PORT}", I18nManager.T("settings_https_port"));
             footerHtml = footerHtml.Replace("{SETTINGS_USE_HTTPS}", I18nManager.T("settings_use_https"));
-            footerHtml = footerHtml.Replace("{SETTINGS_SEC_FEATURES}", I18nManager.T("settings_sec_features"));
-            footerHtml = footerHtml.Replace("{SETTINGS_ENABLE_DEV}", I18nManager.T("settings_enable_dev"));
             footerHtml = footerHtml.Replace("{SETTINGS_SEC_CACHE}", I18nManager.T("settings_sec_cache"));
             footerHtml = footerHtml.Replace("{SETTINGS_CACHE_SIZE_LABEL}", I18nManager.T("settings_cache_size_label"));
             footerHtml = footerHtml.Replace("{SETTINGS_CACHE_CALCULATING}", I18nManager.T("settings_cache_calculating"));

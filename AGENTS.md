@@ -46,7 +46,7 @@ Windows 托盘应用：纯 C# (.NET Framework 4.x) 单文件 exe，将本地磁�
 ## 插件系统
 
 - 架构：每插件一个子进程 `plugins/<id>/backend.exe`，与宿主经 stdin/stdout 字节帧协议（v1）通信；核心在 `src/PluginHost.cs`（发现/生命周期/帧路由），协议规范全文见 README「插件协议 v1」。
-- 挂接点固定三处：`HttpServer.ProcessRequest`（`/plugin/<id>` 页面）、`HttpServer.HandleApiRequest` 尾部（`/api/plugin/<id>/*`）、`FileExplorer.RenderSidebar` 插件分组（受 `enable_dev_ecosystem` 门控）；托盘菜单 + 启动初始化 + 退出 ShutdownAll 在 `Program.cs`。
+- 挂接点固定三处：`HttpServer.ProcessRequest`（`/plugin/<id>` 页面）、`HttpServer.HandleApiRequest` 尾部（`/api/plugin/<id>/*`）、`FileExplorer.RenderSidebar` 插件分组（自动探测展示）；托盘菜单 + 启动初始化 + 退出 ShutdownAll 在 `Program.cs`。
 - 新增插件 = 在 `plugins/<id>/` 放 `plugin.json` + `backend.cs`（C# 5，同规则）+ 可选 `index.html`/`assets/`/`lang/`；build.ps1 自动编译并同步到 `dist/plugins/`——**无需改构建脚本**。
 - 插件 id 保留字：`gradle` / `npm` / `pnpm` / `maven`；插件词条 ini 由 `I18nManager.RegisterStrings` 以 `plugin_<id>_` 前缀注册，语言切换自动重灌。
 - 宿主侧新增插件相关文案仍走双 locale ini（`plugin_*` / `log_plugin_*` 前缀）。

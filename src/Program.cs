@@ -86,7 +86,6 @@ namespace LocalDiskServer
         public static MenuItem plainPortMenuItem;
         public static MenuItem sslPortMenuItem;
         public static MenuItem httpsToggleMenuItem;
-        public static MenuItem devEcosystemMenuItem;
         public static MenuItem languageSubMenu;
         public static MenuItem shellMenuMenuItem;
         public static MenuItem startupMenuItem;
@@ -96,7 +95,6 @@ namespace LocalDiskServer
         public static int port = 1234;
         public static int https_port = 1235;
         public static bool use_https = false;
-        public static bool enable_dev_ecosystem = false;
         public static string ssl_hash = "";
         public static int last_bound_https_port = 1235;
         public static string language = "";
@@ -344,15 +342,6 @@ namespace LocalDiskServer
                         {
                             language = line.Substring(9).Trim();
                         }
-                        else if (line.StartsWith("enable_dev_ecosystem=", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string devEcoStr = line.Substring(21).Trim();
-                            bool parsedEco;
-                            if (bool.TryParse(devEcoStr, out parsedEco))
-                            {
-                                enable_dev_ecosystem = parsedEco;
-                            }
-                        }
                     }
                     Log(I18nManager.T("log_config_loaded", port, https_port, string.IsNullOrEmpty(language) ? I18nManager.T("common_auto_match") : language));
                 }
@@ -404,7 +393,6 @@ namespace LocalDiskServer
                 sb.AppendLine("favorites=" + favoritesStr);
                 sb.AppendLine("disabled_plugins=" + (disabledPluginsStr ?? ""));
                 sb.AppendLine("language=" + (language ?? ""));
-                sb.AppendLine("enable_dev_ecosystem=" + enable_dev_ecosystem);
                 File.WriteAllText(configPath, sb.ToString());
                 Log(I18nManager.T("log_config_saved"));
             }
@@ -505,10 +493,6 @@ namespace LocalDiskServer
             trayMenu.MenuItems.Add(plainPortMenuItem);
             trayMenu.MenuItems.Add(sslPortMenuItem);
             trayMenu.MenuItems.Add(httpsToggleMenuItem);
-
-            devEcosystemMenuItem = new MenuItem(I18nManager.T("menu_dev_ecosystem"), ToggleDevEcosystem);
-            devEcosystemMenuItem.Checked = enable_dev_ecosystem;
-            trayMenu.MenuItems.Add(devEcosystemMenuItem);
 
             // 动态构建多语言二级子菜单
             languageSubMenu = new MenuItem(I18nManager.T("menu_language"));
@@ -614,11 +598,6 @@ namespace LocalDiskServer
             {
                 httpsToggleMenuItem.Text = I18nManager.T("menu_toggle_https");
                 httpsToggleMenuItem.Checked = use_https;
-            }
-            if (devEcosystemMenuItem != null)
-            {
-                devEcosystemMenuItem.Text = I18nManager.T("menu_dev_ecosystem");
-                devEcosystemMenuItem.Checked = enable_dev_ecosystem;
             }
             if (languageSubMenu != null)
             {
@@ -1060,7 +1039,6 @@ namespace LocalDiskServer
                 sb.AppendFormat("\"port\":{0},", port);
                 sb.AppendFormat("\"https_port\":{0},", https_port);
                 sb.AppendFormat("\"use_https\":{0},", use_https ? "true" : "false");
-                sb.AppendFormat("\"enable_dev_ecosystem\":{0},", enable_dev_ecosystem ? "true" : "false");
                 sb.AppendFormat("\"text_extensions\":\"{0}\",", HttpServer.EscapeJson(textExtensionsStr ?? ""));
                 sb.AppendFormat("\"disabled_plugins\":\"{0}\",", HttpServer.EscapeJson(disabledPluginsStr ?? ""));
                 sb.AppendFormat("\"language\":\"{0}\",", HttpServer.EscapeJson(language ?? ""));
@@ -1209,7 +1187,6 @@ namespace LocalDiskServer
                     int newPort = port;
                     int newHttpsPort = https_port;
                     bool newUseHttps = use_https;
-                    bool newDevEcosystem = enable_dev_ecosystem;
                     string newTextExt = textExtensionsStr;
                     string newLang = language;
                     bool newStartup = IsStartupEnabledStatic();
@@ -1218,7 +1195,6 @@ namespace LocalDiskServer
                     if (jsonPairs.ContainsKey("port")) int.TryParse(jsonPairs["port"], out newPort);
                     if (jsonPairs.ContainsKey("https_port")) int.TryParse(jsonPairs["https_port"], out newHttpsPort);
                     if (jsonPairs.ContainsKey("use_https")) bool.TryParse(jsonPairs["use_https"], out newUseHttps);
-                    if (jsonPairs.ContainsKey("enable_dev_ecosystem")) bool.TryParse(jsonPairs["enable_dev_ecosystem"], out newDevEcosystem);
                     if (jsonPairs.ContainsKey("text_extensions")) newTextExt = jsonPairs["text_extensions"];
                     if (jsonPairs.ContainsKey("language")) newLang = jsonPairs["language"];
                     if (jsonPairs.ContainsKey("startup_enabled")) bool.TryParse(jsonPairs["startup_enabled"], out newStartup);
@@ -1245,17 +1221,6 @@ namespace LocalDiskServer
                     }
 
                     SetStartupStatic(newStartup);
-
-                    if (newDevEcosystem != enable_dev_ecosystem)
-                    {
-                        enable_dev_ecosystem = newDevEcosystem;
-                        if (devEcosystemMenuItem != null) devEcosystemMenuItem.Checked = enable_dev_ecosystem;
-                        PluginHost.SetPluginEnabled("gradle", enable_dev_ecosystem);
-                        PluginHost.SetPluginEnabled("maven", enable_dev_ecosystem);
-                        PluginHost.SetPluginEnabled("npm", enable_dev_ecosystem);
-                        PluginHost.SetPluginEnabled("pnpm", enable_dev_ecosystem);
-                        Log(I18nManager.T("log_dev_ecosystem_updated", enable_dev_ecosystem ? I18nManager.T("common_enabled") : I18nManager.T("common_disabled")));
-                    }
 
                     bool portChanged = (newPort != port || newHttpsPort != https_port || newUseHttps != use_https);
                     int oldHttpsPort = last_bound_https_port;
@@ -1326,23 +1291,6 @@ namespace LocalDiskServer
                 dict[key] = val;
             }
             return dict;
-        }
-
-        private void ToggleDevEcosystem(object sender, EventArgs e)
-        {
-            enable_dev_ecosystem = !enable_dev_ecosystem;
-            if (devEcosystemMenuItem != null)
-            {
-                devEcosystemMenuItem.Checked = enable_dev_ecosystem;
-            }
-            SaveConfig();
-            UpdateMenuTexts();
-
-            PluginHost.SetPluginEnabled("gradle", enable_dev_ecosystem);
-            PluginHost.SetPluginEnabled("maven", enable_dev_ecosystem);
-            PluginHost.SetPluginEnabled("npm", enable_dev_ecosystem);
-            PluginHost.SetPluginEnabled("pnpm", enable_dev_ecosystem);
-            Log(I18nManager.T("log_dev_ecosystem_updated", enable_dev_ecosystem ? I18nManager.T("common_enabled") : I18nManager.T("common_disabled")));
         }
 
         private void OpenPluginDirectory(object sender, EventArgs e)

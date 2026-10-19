@@ -2799,7 +2799,6 @@ function showSettingsModal() {
             document.getElementById('setting-port').value = data.port;
             document.getElementById('setting-https-port').value = data.https_port;
             document.getElementById('setting-use-https').checked = !!data.use_https;
-            document.getElementById('setting-enable-dev').checked = !!data.enable_dev_ecosystem;
             document.getElementById('setting-startup').checked = !!data.startup_enabled;
 
             const exts = (data.text_extensions || '').split(/[,;\s\r\n]+/).filter(Boolean);
@@ -3094,7 +3093,6 @@ function saveSettingsForm() {
         port: parseInt(document.getElementById('setting-port').value, 10),
         https_port: parseInt(document.getElementById('setting-https-port').value, 10),
         use_https: document.getElementById('setting-use-https').checked,
-        enable_dev_ecosystem: document.getElementById('setting-enable-dev').checked,
         startup_enabled: document.getElementById('setting-startup').checked,
         language: document.getElementById('setting-language').value,
         text_extensions: document.getElementById('setting-text-ext').value

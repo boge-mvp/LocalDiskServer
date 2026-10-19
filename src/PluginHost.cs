@@ -298,7 +298,6 @@ namespace LocalDiskServer
             hello["httpPort"] = ServerApplicationContext.port;
             hello["httpsPort"] = ServerApplicationContext.https_port;
             hello["useHttps"] = ServerApplicationContext.use_https;
-            hello["enableDevEcosystem"] = ServerApplicationContext.enable_dev_ecosystem;
             hello["appVersion"] = ServerApplicationContext.APP_VERSION;
             SendFrame(rt, T_HANDSHAKE_REQ, Encoding.UTF8.GetBytes(json.Serialize(hello)));
 
