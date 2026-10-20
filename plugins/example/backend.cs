@@ -29,6 +29,7 @@ internal static class ExampleBackend
     private const byte T_REQUEST_HEAD = 0x03;
     private const byte T_RESPONSE_HEAD = 0x04;
     private const byte T_BIN_CHUNK = 0x05;
+    private const byte T_EVENT = 0x06;
     private const int CHUNK = 64 * 1024;
 
     private static readonly JavaScriptSerializer json = new JavaScriptSerializer();
@@ -86,6 +87,10 @@ internal static class ExampleBackend
                 else if (type == T_REQUEST_HEAD)
                 {
                     HandleRequest(stdin, stdout, payload);
+                }
+                else if (type == T_EVENT)
+                {
+                    // 预留事件接收
                 }
             }
         }

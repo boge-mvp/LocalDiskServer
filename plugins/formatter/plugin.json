@@ -1,0 +1,12 @@
+{
+  "id": "formatter",
+  "name": "格式化工具箱",
+  "version": "1.0.0",
+  "author": "LocalDiskServer",
+  "description": "支持 JSON、XML、SQL、URL、Base64、JWT 及通用文本的美化、压缩与转换",
+  "icon": "🛠️",
+  "order": 50,
+  "timeout": 15,
+  "concurrency": 4,
+  "warmup": true
+}

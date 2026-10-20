@@ -468,7 +468,7 @@ namespace LocalDiskServer
             string folderName = Path.GetFileName(dirPath);
             if (string.IsNullOrEmpty(folderName)) folderName = dirPath;
             sb.Append(HttpServer.GetHtmlHeader(I18nManager.T("explorer_page_title", folderName), webPath, "layout-explorer"));
-            sb.AppendFormat("<script>const currentDirPath = '{0}';</script>", dirPath.Replace("\\", "\\\\").Replace("'", "\\'"));
+            sb.AppendFormat("<script>window.currentDirPath = '{0}';</script>", dirPath.Replace("\\", "\\\\").Replace("'", "\\'"));
 
             string[] parts = webPath.Split(new char[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
 
@@ -526,11 +526,7 @@ namespace LocalDiskServer
 
             // Search Bar and View Switcher on the Right
             sb.Append("  <div class='toolbar-right' style='display: flex; align-items: center; gap: 8px;'>");
-            sb.Append("    <select id='view-select' onchange='setViewMode(this.value)' style='height: 32px; background: var(--container-bg); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 8px; cursor: pointer; outline: none; font-size: 0.85rem;'>");
-            sb.AppendFormat("      <option value='details'>{0}</option>", I18nManager.T("lobby_view_details"));
-            sb.AppendFormat("      <option value='large'>{0}</option>", I18nManager.T("lobby_view_large"));
-            sb.AppendFormat("      <option value='medium'>{0}</option>", I18nManager.T("lobby_view_medium"));
-            sb.Append("    </select>");
+            sb.Append(HttpServer.RenderViewMenuDropdown());
             sb.AppendFormat("    <input type='text' id='search' placeholder='{0}' oninput='filterList()'>", I18nManager.T("toolbar_search_placeholder"));
             sb.Append("  </div>");
             sb.Append("</div>"); // Close toolbar

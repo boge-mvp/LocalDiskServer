@@ -96,6 +96,10 @@ function Sync-PluginDirectorySafely([string]$sourceDir, [string]$destDir) {
             if ($configNames -contains $srcItem.Name.ToLowerInvariant()) {
                 $isConfigFile = $true
             }
+            # lang 目录下的多语言字典文件属于随版本更新的系统资源，不属于用户运行时配置
+            if ($relPath -like "*\lang\*" -or $relPath -like "*/lang/*") {
+                $isConfigFile = $false
+            }
 
             if ($isConfigFile -and (Test-Path $targetItemPath)) {
                 Write-Host "     * [保护配置] 跳过覆盖插件配置文件: $relPath" -ForegroundColor DarkCyan

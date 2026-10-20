@@ -696,30 +696,329 @@ let lastSelected = null;
 let selectedRows = new Set();
 let contextMenu = null;
 
-document.addEventListener('DOMContentLoaded', () => {
-    initCollapsibleSidebars();
-    initProtocolSwitcher();
-    restoreColumnWidths();
-    
-    if (typeof currentView !== 'undefined') {
-        if (currentView === 'gradle') {
-            initGradleDashboard();
-            return;
-        } else if (currentView === 'npm') {
-            initNpmDashboard();
-            return;
-        } else if (currentView === 'pnpm') {
-            initPnpmDashboard();
-            return;
+// ----------------------------------------------------
+// Seamless SPA Navigation & Sidebar Scroll Persistence
+// ----------------------------------------------------
+
+function initSidebarScrollPersistence() {
+    const treeContainer = document.querySelector('#sidebar-pane .tree-container');
+    if (!treeContainer) return;
+
+    // 1. 恢复之前记录的滚动条位置
+    const saved = sessionStorage.getItem('lds_sidebar_scroll_top');
+    if (saved !== null) {
+        const top = parseInt(saved, 10);
+        if (!isNaN(top) && top >= 0) {
+            treeContainer.scrollTop = top;
         }
     }
 
-    initSelection();
-    initIncrementalRender();
-    initDragSelect();
-    initContextMenu();
-    initShortcuts();
-    initViewSwitcher();
+    // 2. 确保当前选中的激活项在视口内平滑呈现
+    requestAnimationFrame(() => {
+        const activeNode = treeContainer.querySelector('.active-node, .tree-row.active');
+        if (activeNode) {
+            const nodeRect = activeNode.getBoundingClientRect();
+            const containerRect = treeContainer.getBoundingClientRect();
+            if (nodeRect.top < containerRect.top || nodeRect.bottom > containerRect.bottom) {
+                activeNode.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+        }
+    });
+
+    // 3. 监听滚动并防抖 80ms 保存至 sessionStorage
+    let scrollTimer = null;
+    treeContainer.addEventListener('scroll', () => {
+        clearTimeout(scrollTimer);
+        scrollTimer = setTimeout(() => {
+            sessionStorage.setItem('lds_sidebar_scroll_top', treeContainer.scrollTop);
+        }, 80);
+    }, { passive: true });
+}
+
+function cleanupCurrentView() {
+    if (window.gradlePollTimer) {
+        clearInterval(window.gradlePollTimer);
+        window.gradlePollTimer = null;
+    }
+}
+
+function alignBreadcrumbsToEnd() {
+    const b = document.getElementById('breadcrumbs-bar');
+    if (b) {
+        b.scrollLeft = b.scrollWidth;
+        requestAnimationFrame(() => {
+            b.scrollLeft = b.scrollWidth;
+        });
+        setTimeout(() => {
+            b.scrollLeft = b.scrollWidth;
+        }, 50);
+    }
+}
+
+function dispatchViewInit(viewName) {
+    window.currentView = viewName;
+    initCollapsibleSidebars();
+    initProtocolSwitcher();
+
+    if (viewName === 'gradle') {
+        if (typeof initGradleDashboard === 'function') initGradleDashboard();
+    } else if (viewName === 'npm') {
+        if (typeof initNpmDashboard === 'function') initNpmDashboard();
+    } else if (viewName === 'pnpm') {
+        if (typeof initPnpmDashboard === 'function') initPnpmDashboard();
+    } else if (viewName === 'maven') {
+        if (typeof pollMavenData === 'function') pollMavenData();
+    } else if (viewName === 'formatter') {
+        if (typeof window.initFormatterView === 'function') window.initFormatterView();
+    } else {
+        // 普通文件浏览器模式
+        if (typeof initSelection === 'function') initSelection();
+        if (typeof initIncrementalRender === 'function') initIncrementalRender();
+        if (typeof initDragSelect === 'function') initDragSelect();
+        if (typeof initContextMenu === 'function') initContextMenu();
+        if (typeof initShortcuts === 'function') initShortcuts();
+        if (typeof initViewSwitcher === 'function') initViewSwitcher();
+        if (typeof restoreColumnWidths === 'function') restoreColumnWidths();
+        alignBreadcrumbsToEnd();
+    }
+
+    // 重新挂载可拖拽列宽
+    if (typeof window.initColumnResize === 'function') {
+        if (document.getElementById('file-table')) {
+            window.initColumnResize('#file-table', { storageKey: 'col_widths_file_table' });
+        }
+        if (document.getElementById('gradle-deps-table')) {
+            window.initColumnResize('#gradle-deps-table', { storageKey: 'col_widths_gradle_deps' });
+        }
+        if (document.getElementById('pnpm-pkgs-table')) {
+            window.initColumnResize('#pnpm-pkgs-table', { storageKey: 'col_widths_pnpm_pkgs' });
+        }
+        var mavenTable = document.getElementById('maven-pkgs-tbody')?.closest('table');
+        if (mavenTable && mavenTable.id) {
+            window.initColumnResize('#' + mavenTable.id, { storageKey: 'col_widths_maven_pkgs' });
+        }
+    }
+}
+
+function showPjaxProgress() {
+    let bar = document.getElementById('pjax-progress');
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'pjax-progress';
+        document.body.appendChild(bar);
+    }
+    bar.className = 'loading';
+}
+
+function hidePjaxProgress() {
+    const bar = document.getElementById('pjax-progress');
+    if (bar) {
+        bar.className = 'done';
+        setTimeout(() => {
+            if (bar.className === 'done') bar.className = '';
+        }, 260);
+    }
+}
+
+async function performSeamlessNavigation(targetUrl, pushHistory = true) {
+    const sidebar = document.getElementById('sidebar-pane');
+    if (!sidebar) {
+        window.location.href = targetUrl;
+        return;
+    }
+
+    // 保存当前滚动位置
+    const treeContainer = sidebar.querySelector('.tree-container');
+    if (treeContainer) {
+        sessionStorage.setItem('lds_sidebar_scroll_top', treeContainer.scrollTop);
+    }
+
+    // 立即更新侧边栏高亮项
+    const targetPath = new URL(targetUrl, window.location.origin).pathname;
+    const allLinks = sidebar.querySelectorAll('a');
+    let matchedLink = null;
+    allLinks.forEach(a => {
+        const row = a.closest('.tree-row') || a;
+        row.classList.remove('active-node', 'active');
+        a.classList.remove('active-node', 'active');
+        if (a.getAttribute('href') === targetPath || a.pathname === targetPath) {
+            matchedLink = a;
+        }
+    });
+    if (matchedLink) {
+        const row = matchedLink.closest('.tree-row') || matchedLink;
+        row.classList.add('active-node', 'active');
+        matchedLink.classList.add('active-node', 'active');
+    }
+
+    showPjaxProgress();
+    const mainEl = document.querySelector('.explorer-main');
+    if (mainEl) mainEl.classList.add('pjax-animating');
+
+    try {
+        const res = await fetch(targetUrl, {
+            headers: { 'X-Requested-With': 'Seamless-SPA' }
+        });
+        if (!res.ok) {
+            window.location.href = targetUrl;
+            return;
+        }
+
+        const htmlText = await res.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(htmlText, 'text/html');
+
+        const newMain = doc.querySelector('.explorer-main');
+        const newPreview = doc.querySelector('#preview-pane');
+
+        // 如果新页面不具备探索器三栏结构（比如跳到了首页大厅 /），退回原生跳转
+        if (!newMain) {
+            window.location.href = targetUrl;
+            return;
+        }
+
+        // 替换中间主要内容
+        if (mainEl && newMain) {
+            mainEl.replaceWith(newMain);
+        }
+
+        // 替换右侧属性/预览面板
+        const currentPreview = document.getElementById('preview-pane');
+        if (currentPreview && newPreview) {
+            currentPreview.replaceWith(newPreview);
+        } else if (newPreview) {
+            const container = document.querySelector('.container');
+            if (container) container.appendChild(newPreview);
+        }
+
+        // 同步新页面的专用模态框（替换同名 modal 或新增）
+        const newModals = doc.querySelectorAll('.modal');
+        newModals.forEach(modal => {
+            if (modal.id && !['properties-modal', 'settings-modal', 'log-modal', 'app-confirm-modal'].includes(modal.id)) {
+                const existing = document.getElementById(modal.id);
+                if (existing) {
+                    existing.replaceWith(modal);
+                } else {
+                    document.body.appendChild(modal);
+                }
+            }
+        });
+
+        // 更新页面标题
+        if (doc.title) {
+            document.title = doc.title;
+        }
+
+        // 更新历史记录
+        if (pushHistory) {
+            window.history.pushState({ pjax: true, url: targetUrl }, document.title, targetUrl);
+        }
+
+        // 探测目标视图并同步探索器上下文变量 (currentDirPath, I18N_STATUS)
+        let targetView = undefined;
+        if (targetPath.startsWith('/plugin/')) {
+            targetView = targetPath.replace('/plugin/', '').replace(/\/.*$/, '');
+        } else {
+            const scripts = doc.querySelectorAll('script');
+            for (let i = 0; i < scripts.length; i++) {
+                const text = scripts[i].textContent;
+                const viewMatch = text.match(/currentView\s*=\s*['"]([^'"]+)['"]/);
+                if (viewMatch) {
+                    targetView = viewMatch[1];
+                }
+                const dirMatch = text.match(/currentDirPath\s*=\s*['"]([^'"]+)['"]/);
+                if (dirMatch) {
+                    window.currentDirPath = dirMatch[1].replace(/\\\\/g, '\\');
+                }
+                if (text.includes('window.I18N_STATUS')) {
+                    try {
+                        const func = new Function(text);
+                        func();
+                    } catch (e) {
+                        console.error('Failed to update I18N_STATUS:', e);
+                    }
+                }
+            }
+        }
+
+        cleanupCurrentView();
+        dispatchViewInit(targetView);
+        alignBreadcrumbsToEnd();
+
+        // 恢复侧边栏滚动条位置
+        if (treeContainer) {
+            const savedTop = parseInt(sessionStorage.getItem('lds_sidebar_scroll_top') || '0', 10);
+            if (!isNaN(savedTop)) {
+                treeContainer.scrollTop = savedTop;
+            }
+        }
+    } catch (err) {
+        console.error('Seamless navigation failed, falling back to full reload:', err);
+        window.location.href = targetUrl;
+    } finally {
+        hidePjaxProgress();
+        const updatedMain = document.querySelector('.explorer-main');
+        if (updatedMain) updatedMain.classList.remove('pjax-animating');
+    }
+}
+
+function initSeamlessExplorerNavigation() {
+    const sidebar = document.getElementById('sidebar-pane');
+    if (!sidebar) return;
+
+    // 拦截侧边栏内的链接点击
+    sidebar.addEventListener('click', (e) => {
+        // 如果点击的是折叠箭头或带有 onclick 的操作按钮，不走链接跳转
+        if (e.target.closest('.tree-arrow') || e.target.closest('.sidebar-toggle-btn') || e.target.closest('.sidebar-expand-btn')) {
+            return;
+        }
+
+        const link = e.target.closest('a');
+        if (!link) return;
+
+        // 忽略非当前窗口的导航（Ctrl/Shift/Cmd 点击）或下载链接
+        if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || link.target === '_blank' || link.hasAttribute('download')) {
+            return;
+        }
+
+        const href = link.getAttribute('href');
+        if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
+
+        const targetUrl = new URL(href, window.location.origin);
+        if (targetUrl.origin !== window.location.origin) return; // 外部链接不拦截
+
+        // 首页大厅不是三栏探索器，允许原生跳转
+        if (targetUrl.pathname === '/') {
+            return;
+        }
+
+        // 如果点击的是当前已激活的同一个页面，不做重复加载
+        if (targetUrl.pathname === window.location.pathname && targetUrl.search === window.location.search) {
+            e.preventDefault();
+            return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        performSeamlessNavigation(targetUrl.href, true);
+    });
+
+    // 监听前进 / 后退
+    window.addEventListener('popstate', (e) => {
+        if (document.getElementById('sidebar-pane')) {
+            performSeamlessNavigation(window.location.href, false);
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    initCollapsibleSidebars();
+    initProtocolSwitcher();
+    initSidebarScrollPersistence();
+    initSeamlessExplorerNavigation();
+
+    const initialView = (typeof currentView !== 'undefined') ? currentView : undefined;
+    dispatchViewInit(initialView);
 
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('showlogs') === '1') {
@@ -760,7 +1059,8 @@ function initSelection() {
     document.addEventListener('click', (e) => {
         const item = e.target.closest('.item-row, .drive-card, .fav-card');
         if (!item) {
-            if (!e.target.closest('.context-menu, .toolbar, .explorer-statusbar')) {
+            // 点击右侧预览边栏、左侧导航边栏、工具栏、状态栏、右键菜单或弹窗模态框等区域，保持中间项选中状态不变
+            if (!e.target.closest('.context-menu, .toolbar, .explorer-statusbar, #preview-pane, .explorer-preview, #sidebar-pane, .explorer-sidebar, .modal')) {
                 clearAllSelections();
             }
             return;
@@ -843,14 +1143,22 @@ function initDragSelect() {
 
     document.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return; // Left click only
-        if (e.target.closest('input, button, a, .context-menu, .toolbar')) return;
+        if (e.target.closest('input, button, a, select, textarea, .context-menu, .toolbar')) return;
+        // 排除右侧预览栏、左侧导航栏、底部状态栏、弹窗模态框，防止点击右侧边栏误清除选中或误触发框选
+        if (e.target.closest('#preview-pane, .explorer-preview, #sidebar-pane, .explorer-sidebar, .explorer-statusbar, .modal')) return;
+
+        // 仅在主列表区域触发框选与空白点击判定
+        const mainArea = e.target.closest('.explorer-main, .container, .grid');
+        if (!mainArea) return;
 
         isDragging = true;
         startX = e.pageX;
         startY = e.pageY;
 
         if (!e.ctrlKey && !e.shiftKey) {
-            clearAllSelections();
+            if (!e.target.closest('.item-row, .drive-card, .fav-card')) {
+                clearAllSelections();
+            }
         }
     });
 
@@ -1235,20 +1543,71 @@ function initShortcuts() {
     });
 }
 
+function toggleViewMenu(e) {
+    if (e) e.stopPropagation();
+    const dropdown = document.getElementById('view-dropdown');
+    if (dropdown) {
+        dropdown.classList.toggle('open');
+    }
+}
+
+function selectViewMode(view) {
+    setViewMode(view);
+    const dropdown = document.getElementById('view-dropdown');
+    if (dropdown) {
+        dropdown.classList.remove('open');
+    }
+}
+
 function initViewSwitcher() {
     const currentView = localStorage.getItem('explorer-view-mode') || 'details';
     setViewMode(currentView);
+
+    // Click outside to close view-dropdown
+    document.addEventListener('click', function(e) {
+        const dropdown = document.getElementById('view-dropdown');
+        if (dropdown && !dropdown.contains(e.target)) {
+            dropdown.classList.remove('open');
+        }
+    });
+
+    // Escape key to close
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            const dropdown = document.getElementById('view-dropdown');
+            if (dropdown) {
+                dropdown.classList.remove('open');
+            }
+        }
+    });
 }
 
 function setViewMode(view) {
     localStorage.setItem('explorer-view-mode', view);
-    document.body.classList.remove('view-details', 'view-large', 'view-medium');
+    
+    const viewClasses = ['view-details', 'view-large', 'view-medium', 'view-small', 'view-xlarge', 'view-list', 'view-tiles', 'view-content'];
+    for (var i = 0; i < viewClasses.length; i++) {
+        document.body.classList.remove(viewClasses[i]);
+    }
     document.body.classList.add('view-' + view);
     
     const table = document.getElementById('file-table');
     if (table) {
-        table.className = '';
+        for (var j = 0; j < viewClasses.length; j++) {
+            table.classList.remove(viewClasses[j]);
+        }
         table.classList.add('view-' + view);
+    }
+
+    // Synchronize active checkmark in view-menu
+    const menuItems = document.querySelectorAll('.view-menu-item');
+    for (var k = 0; k < menuItems.length; k++) {
+        var item = menuItems[k];
+        if (item.getAttribute('data-view') === view) {
+            item.classList.add('active');
+        } else {
+            item.classList.remove('active');
+        }
     }
 
     const select = document.getElementById('view-select');
@@ -1984,35 +2343,40 @@ function loadWrapperDetails(version, cardElement) {
             }
 
             let subfoldersHtml = '';
-            if (data.subfolders.length === 0) {
+            if (!data.subfolders || data.subfolders.length === 0) {
                 subfoldersHtml = `<span style="color: var(--text-muted); font-size: 0.8rem;">${t('gradle_js_wrapper_subfolder_empty')}</span>`;
             } else {
                 subfoldersHtml = data.subfolders.map(f => `<span style="background: rgba(41, 128, 185, 0.1); border: 1px solid rgba(41, 128, 185, 0.3); color: var(--accent-hover); font-weight: 500; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">${escapeHtml(f)}</span>`).join(' ');
             }
 
+            const wrapperPath = data.path || data.absolutePath || '';
+            const wrapperSize = data.size || data.totalSize || '-';
+            const fileCountVal = data.fileCount !== undefined ? data.fileCount : (data.totalFiles !== undefined ? data.totalFiles : 0);
+            const fileCountStr = typeof fileCountVal === 'number' ? fileCountVal.toLocaleString() : (fileCountVal || 0);
+
             content.innerHTML = `
                 <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
                     <span style="font-size: 2.2rem;">☕</span>
                     <div>
-                        <div style="font-weight: bold; font-size: 1.15rem; color: var(--accent-hover);">Gradle ${escapeHtml(data.version)}</div>
+                        <div style="font-weight: bold; font-size: 1.15rem; color: var(--accent-hover);">Gradle ${escapeHtml(data.version || '')}</div>
                         <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">${t('gradle_js_wrapper_pkg_tag')}</div>
                     </div>
                 </div>
                 
                 <div style="background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px; margin-bottom: 15px; font-size: 0.85rem; display: flex; flex-direction: column; gap: 6px;">
-                    <div style="display: flex; justify-content: space-between;"><span style="color:var(--text-muted);">${t('gradle_js_wrapper_pkg_size')}</span><strong>${data.size}</strong></div>
-                    <div style="display: flex; justify-content: space-between;"><span style="color:var(--text-muted);">${t('gradle_js_wrapper_total_files')}</span><span>${t('gradle_js_wrapper_total_files_val', data.fileCount.toLocaleString())}</span></div>
-                    <div style="display: flex; justify-content: space-between;"><span style="color:var(--text-muted);">${t('gradle_js_wrapper_zip_file')}</span><span>${escapeHtml(data.zipFile)} (${data.zipExists ? t('gradle_js_wrapper_zip_downloaded') : t('gradle_js_wrapper_zip_missing')})</span></div>
+                    <div style="display: flex; justify-content: space-between;"><span style="color:var(--text-muted);">${t('gradle_js_wrapper_pkg_size')}</span><strong>${escapeHtml(wrapperSize)}</strong></div>
+                    <div style="display: flex; justify-content: space-between;"><span style="color:var(--text-muted);">${t('gradle_js_wrapper_total_files')}</span><span>${t('gradle_js_wrapper_total_files_val', fileCountStr)}</span></div>
+                    <div style="display: flex; justify-content: space-between;"><span style="color:var(--text-muted);">${t('gradle_js_wrapper_zip_file')}</span><span>${escapeHtml(data.zipFile || '')} (${data.zipExists ? t('gradle_js_wrapper_zip_downloaded') : t('gradle_js_wrapper_zip_missing')})</span></div>
                 </div>
 
                 <div style="margin-bottom: 15px;">
                     <h4 style="margin-top: 0; margin-bottom: 4px; font-size: 0.85rem; color: var(--text-muted);">${t('gradle_js_wrapper_path_title')}</h4>
-                    <div style="font-family: monospace; font-size: 0.75rem; background: var(--bg-color); border: 1px solid var(--border-color); padding: 8px; border-radius: 4px; overflow-x: auto; white-space: nowrap; cursor: pointer; text-decoration: underline; width: 100%; max-width: 100%; box-sizing: border-box;" onclick="copyToClipboard(this, '${escapeJs(data.path)}' )" title="Copy Path">${escapeHtml(data.path)}</div>
+                    <div style="font-family: monospace; font-size: 0.75rem; background: var(--bg-color); border: 1px solid var(--border-color); padding: 8px; border-radius: 4px; overflow-x: auto; white-space: nowrap; cursor: pointer; text-decoration: underline; width: 100%; max-width: 100%; box-sizing: border-box;" onclick="copyToClipboard(this, '${escapeJs(wrapperPath)}' )" title="Copy Path">${escapeHtml(wrapperPath)}</div>
                 </div>
 
                 <div style="margin-bottom: 15px;">
                     <h4 style="margin-top: 0; margin-bottom: 4px; font-size: 0.85rem; color: var(--text-muted);">${t('gradle_js_wrapper_hash_dir')}</h4>
-                    <div style="font-family: monospace; font-size: 0.75rem; background: var(--bg-color); border: 1px solid var(--border-color); padding: 8px; border-radius: 4px; color: var(--text-muted); word-break: break-all;">${escapeHtml(data.hashFolder)}</div>
+                    <div style="font-family: monospace; font-size: 0.75rem; background: var(--bg-color); border: 1px solid var(--border-color); padding: 8px; border-radius: 4px; color: var(--text-muted); word-break: break-all;">${escapeHtml(data.hashFolder || '')}</div>
                 </div>
 
                 <div style="margin-bottom: 15px; display: flex; flex-direction: column; min-height: 100px;">
@@ -2023,8 +2387,8 @@ function loadWrapperDetails(version, cardElement) {
                 </div>
 
                 <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
-                    <button onclick="openInExplorer('${escapeJs(data.path)}' )" class='btn' style="width: 100%; padding: 8px; font-weight: bold;">${t('gradle_js_btn_open_in_explorer')}</button>
-                    <button onclick="deleteWrapper('${escapeJs(data.path)}' , '${escapeJs(data.version)}' )" class='btn btn-danger' style="width: 100%; padding: 8px; font-weight: bold;">${t('gradle_js_btn_delete_wrapper')}</button>
+                    <button onclick="openInExplorer('${escapeJs(wrapperPath)}' )" class='btn' style="width: 100%; padding: 8px; font-weight: bold;">${t('gradle_js_btn_open_in_explorer')}</button>
+                    <button onclick="deleteWrapper('${escapeJs(wrapperPath)}' , '${escapeJs(data.version || '')}' )" class='btn btn-danger' style="width: 100%; padding: 8px; font-weight: bold;">${t('gradle_js_btn_delete_wrapper')}</button>
                 </div>
             `;
         })
@@ -2904,7 +3268,7 @@ function loadSettingsPlugins() {
                 badgeEl.style.display = list.length > 0 ? 'inline-flex' : 'none';
             }
             if (statEl) {
-                statEl.textContent = `${list.length} 个插件 · ${enabledCount} 个已启用`;
+                statEl.textContent = window.t('settings_plugin_stat', list.length, enabledCount) || `${list.length} 个插件 · ${enabledCount} 个已启用`;
             }
 
             if (list.length === 0) {
@@ -3815,7 +4179,7 @@ function renderPnpmDetailPane() {
         ${versionPillsHtml}
 
         <div style='display: flex; flex-direction: column; gap: 8px; font-size: 0.82rem; margin-bottom: 12px;'>
-            <div><span style='color: var(--text-muted);'>${window.t('pnpm_detail_files_count')}</span> <strong style='font-family: monospace;'>${activePkg.fileCount || 0} 个文件</strong></div>
+            <div><span style='color: var(--text-muted);'>${window.t('pnpm_detail_files_count')}</span> <strong style='font-family: monospace;'>${window.t('pnpm_detail_files_unit', activePkg.fileCount || 0) || ((activePkg.fileCount || 0) + ' 个文件')}</strong></div>
             <div><span style='color: var(--text-muted);'>${window.t('pnpm_detail_pkg_size')}</span> <strong style='font-family: monospace; color: var(--accent-hover);'>${formatBytes(activePkg.size || 0)}</strong></div>
             <div><span style='color: var(--text-muted);'>${window.t('pnpm_detail_index_file')}</span><br><span style='font-family: monospace; font-size: 0.72rem; word-break: break-all; color: var(--text-muted);'>${escapeHtml(activePkg.IndexFilePath || activePkg.indexFilePath || '-')}</span></div>
         </div>
@@ -3825,18 +4189,18 @@ function renderPnpmDetailPane() {
         <div style='margin-top: 8px; margin-bottom: 12px;'>
             <div style='display: flex; justify-content: space-between; align-items: center; font-size: 0.82rem; font-weight: bold; color: var(--text-muted); margin-bottom: 6px;'>
                 <span>${window.t('pnpm_detail_sec_files', activePkg.fileCount || 0)}</span>
-                <span id='pnpm-files-loading' style='font-size: 0.75rem; color: var(--accent-color); display: none;'>🔄 加载中...</span>
+                <span id='pnpm-files-loading' style='font-size: 0.75rem; color: var(--accent-color); display: none;'>${window.t('pnpm_files_loading', '🔄 加载中...')}</span>
             </div>
             <div id='pnpm-pkg-files-list' style='max-height: 220px; overflow-y: auto; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 4px; padding: 6px;' class='custom-scrollbar'>
                 <div style='color: var(--text-muted); font-size: 0.75rem; text-align: center; padding: 10px;'>
-                    <button class='config-btn-sm' onclick='loadPnpmPkgFiles("${escapeJs(activePkg.IndexFilePath || activePkg.indexFilePath)}")'>🔍 查看完整文件清单</button>
+                    <button class='config-btn-sm' onclick='loadPnpmPkgFiles("${escapeJs(activePkg.IndexFilePath || activePkg.indexFilePath)}")'>${window.t('pnpm_btn_view_file_list', '🔍 查看完整文件清单')}</button>
                 </div>
             </div>
         </div>
 
         <div style='display: flex; flex-direction: column; gap: 6px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border-color);'>
-            <button onclick='openWithHost("${escapeJs(activePkg.IndexFilePath || activePkg.indexFilePath)}")' class='btn' style='width: 100%; padding: 6px; font-size: 0.85rem; cursor: pointer;'>📂 定位索引文件</button>
-            <button onclick='copyToClipboard(this, "pnpm add ${escapeJs(group.name)}@${escapeJs(activePkg.version)}")' class='btn' style='width: 100%; padding: 6px; font-size: 0.85rem; cursor: pointer;'>📋 复制 pnpm add 命令</button>
+            <button onclick='openWithHost("${escapeJs(activePkg.IndexFilePath || activePkg.indexFilePath)}")' class='btn' style='width: 100%; padding: 6px; font-size: 0.85rem; cursor: pointer;'>${window.t('pnpm_btn_locate_index_file', '📂 定位索引文件')}</button>
+            <button onclick='copyToClipboard(this, "pnpm add ${escapeJs(group.name)}@${escapeJs(activePkg.version)}")' class='btn' style='width: 100%; padding: 6px; font-size: 0.85rem; cursor: pointer;'>${window.t('pnpm_btn_copy_add_cmd', '📋 复制 pnpm add 命令')}</button>
         </div>
     `;
 }
@@ -3863,7 +4227,7 @@ function showPnpmVersionsModal(event, name) {
                     <th style='padding: 6px 10px; font-size: 0.85rem;'>${window.t('npm_th_version')}</th>
                     <th style='padding: 6px 10px; font-size: 0.85rem; text-align: center;'>${window.t('pnpm_th_file_count')}</th>
                     <th style='padding: 6px 10px; font-size: 0.85rem;'>${window.t('npm_th_size')}</th>
-                    <th style='padding: 6px 10px; font-size: 0.85rem; text-align: right; width: 140px;'>操作</th>
+                    <th style='padding: 6px 10px; font-size: 0.85rem; text-align: right; width: 140px;'>${window.t('th_actions') || '操作'}</th>
                 </tr>
             </thead>
             <tbody>
@@ -4010,7 +4374,7 @@ function renderMavenPkgsPage() {
     const pageInfo = document.getElementById('maven-pagination-info');
     if (pageInfo) {
         const endIdx = Math.min(startIdx + pageItems.length, total);
-        pageInfo.textContent = window.t('gradle_pagination_info', mavenCurrentPage, totalPages, total) + ` (当前显示 ${startIdx + 1} - ${endIdx})`;
+        pageInfo.textContent = window.t('gradle_pagination_info', mavenCurrentPage, totalPages, total) + ' ' + (window.t('pagination_showing_range', startIdx + 1, endIdx) || `(当前显示 ${startIdx + 1} - ${endIdx})`);
     }
 }
 
@@ -4115,7 +4479,7 @@ function renderMavenDetailPane() {
         <div style='background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px; margin-bottom: 12px; font-size: 0.85rem; display: flex; flex-direction: column; gap: 6px;'>
             <div style='display: flex; justify-content: space-between;'><span style='color:var(--text-muted);'>Packaging</span><strong style='font-family:monospace;'>${activePkg.packaging}</strong></div>
             <div style='display: flex; justify-content: space-between;'><span style='color:var(--text-muted);'>Size</span><span>${formatBytes(activePkg.size || 0)}</span></div>
-            <div style='display: flex; justify-content: space-between;'><span style='color:var(--text-muted);'>Files</span><span>1 构件
+            <div style='display: flex; justify-content: space-between;'><span style='color:var(--text-muted);'>${window.t('maven_detail_files_count') || 'Files'}</span><span>${window.t('maven_detail_files_val') || '1 构件'}
                 ${activePkg.hasSources ? '<span style="color: #4CAF50; margin-left: 6px;">📄</span>' : ''}
                 ${activePkg.hasJavadoc ? '<span style="color: #2196F3; margin-left: 6px;">📚</span>' : ''}
             </span></div>
@@ -4146,7 +4510,7 @@ function renderMavenDetailPane() {
                 <button id='maven-copy-btn' onclick='copyMavenCode()' style='position: absolute; top: 6px; right: 6px; padding: 3px 8px; font-size: 0.72rem; cursor: pointer; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-muted);'>📋 ${window.t('btn_copy')}</button>
             </div>
             <div style='display: flex; gap: 6px; margin-top: 8px;'>
-                <button onclick='openWithHost("${escapeJs(activePkg.localPath)}")' class='btn' style='flex: 1; padding: 6px; font-size: 0.85rem; cursor: pointer;'>📂 定位目录</button>
+                <button onclick='openWithHost("${escapeJs(activePkg.localPath)}")' class='btn' style='flex: 1; padding: 6px; font-size: 0.85rem; cursor: pointer;'>${window.t('btn_open_folder') || '📂 定位目录'}</button>
             </div>
         </div>
 
@@ -4287,7 +4651,7 @@ function showMavenVersionsModal(event, coord) {
             <th style='padding: 6px 10px; font-size: 0.85rem;'>${window.t('maven_th_version')}</th>
             <th style='padding: 6px 10px; font-size: 0.85rem; text-align: center;'>${window.t('maven_th_packaging')}</th>
             <th style='padding: 6px 10px; font-size: 0.85rem;'>${window.t('npm_th_size')}</th>
-            <th style='padding: 6px 10px; font-size: 0.85rem; text-align: right; width: 140px;'>操作</th>
+            <th style='padding: 6px 10px; font-size: 0.85rem; text-align: right; width: 140px;'>${window.t('th_actions') || '操作'}</th>
         </tr></thead><tbody>`;
 
     group.versions.forEach(v => {
@@ -4682,7 +5046,7 @@ function loadPnpmPkgFiles(indexFile) {
                 const files = data.rawIndex.files;
                 const fileKeys = Object.keys(files);
                 if (fileKeys.length === 0) {
-                    listContainer.innerHTML = `<div style='color: var(--text-muted); font-size: 0.75rem; text-align: center; padding: 10px;'>📭 空清单</div>`;
+                    listContainer.innerHTML = `<div style='color: var(--text-muted); font-size: 0.75rem; text-align: center; padding: 10px;'>${window.t('empty_list') || '📭 空清单'}</div>`;
                     return;
                 }
                 let html = '<div style="display: flex; flex-direction: column; gap: 4px; font-family: monospace; font-size: 0.72rem;">';
@@ -4698,12 +5062,12 @@ function loadPnpmPkgFiles(indexFile) {
                 html += '</div>';
                 listContainer.innerHTML = html;
             } else {
-                listContainer.innerHTML = `<div style='color: #cb3837; font-size: 0.75rem; text-align: center; padding: 10px;'>❌ ${escapeHtml(data.message || '加载失败')}</div>`;
+                listContainer.innerHTML = `<div style='color: #cb3837; font-size: 0.75rem; text-align: center; padding: 10px;'>❌ ${escapeHtml(data.message || (window.t('load_failed') || '加载失败'))}</div>`;
             }
         })
         .catch(err => {
             if (loading) loading.style.display = 'none';
-            listContainer.innerHTML = `<div style='color: #cb3837; font-size: 0.75rem; text-align: center; padding: 10px;'>❌ 网络错误: ${escapeHtml(err.message)}</div>`;
+            listContainer.innerHTML = `<div style='color: #cb3837; font-size: 0.75rem; text-align: center; padding: 10px;'>❌ ${escapeHtml(window.t('network_error', err.message) || ('网络错误: ' + err.message))}</div>`;
         });
 }
 

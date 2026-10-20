@@ -63,6 +63,22 @@ namespace LocalDiskServer
             public string ExePath;
             public string IndexHtmlPath;
             public string Layout;
+
+            public string GetLocalizedName()
+            {
+                string key = "plugin_" + Id + "_name";
+                string val = I18nManager.T(key);
+                if (!string.IsNullOrEmpty(val) && val != key) return val;
+                return string.IsNullOrEmpty(Name) ? Id : Name;
+            }
+
+            public string GetLocalizedDescription()
+            {
+                string key = "plugin_" + Id + "_desc";
+                string val = I18nManager.T(key);
+                if (!string.IsNullOrEmpty(val) && val != key) return val;
+                return string.IsNullOrEmpty(Description) ? "" : Description;
+            }
         }
 
         public static void Initialize()
@@ -229,7 +245,11 @@ namespace LocalDiskServer
 
         private class PluginRuntime
         {
-            public PluginRuntime(PluginInfo info) { Info = info; }
+            public PluginRuntime(PluginInfo info)
+            {
+                Info = info;
+                Gate = new SemaphoreSlim(info.Concurrency > 0 ? info.Concurrency : 4);
+            }
             public PluginInfo Info;
             public Process Proc;
             public readonly object WriteLock = new object();
@@ -368,6 +388,39 @@ namespace LocalDiskServer
                     try { if (rt.Proc != null && !rt.Proc.HasExited) rt.Proc.Kill(); } catch { }
                 }
             }
+        }
+
+        /// <summary>
+        /// 向所有运行中的插件广播语言变更事件
+        /// </summary>
+        public static void BroadcastLanguage(string langCode)
+        {
+            if (string.IsNullOrEmpty(langCode)) return;
+            try
+            {
+                Dictionary<string, object> evt = new Dictionary<string, object>();
+                evt["name"] = "language_changed";
+                evt["language"] = langCode;
+                byte[] payload = Encoding.UTF8.GetBytes(json.Serialize(evt));
+
+                lock (runtimes)
+                {
+                    foreach (KeyValuePair<string, PluginRuntime> kvp in runtimes)
+                    {
+                        PluginRuntime rt = kvp.Value;
+                        if (rt == null || rt.Disabled || rt.Proc == null || rt.Proc.HasExited) continue;
+                        try
+                        {
+                            SendFrame(rt, T_EVENT, payload);
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Log(string.Format("广播插件语言变更失败 ({0}): {1}", rt.Info != null ? rt.Info.Id : "unknown", ex.Message));
+                        }
+                    }
+                }
+            }
+            catch { }
         }
 
         // ─────────────────────────────────────────────────────────
@@ -528,6 +581,13 @@ namespace LocalDiskServer
 
         private static PluginResponse Forward(PluginRuntime rt, string method, string subPath, NameValueCollection query, Stream bodyStream, long bodyLen)
         {
+            if (rt.Gate == null)
+            {
+                lock (rt)
+                {
+                    if (rt.Gate == null) rt.Gate = new SemaphoreSlim(rt.Info.Concurrency > 0 ? rt.Info.Concurrency : 4);
+                }
+            }
             rt.Gate.Wait();
             PendingRequest pr = null;
             try
@@ -563,6 +623,7 @@ namespace LocalDiskServer
                 head["path"] = subPath;
                 head["query"] = qd;
                 head["bodyLen"] = bodyLen;
+                head["language"] = I18nManager.CurrentLanguageCode;
                 SendFrame(rt, T_REQUEST_HEAD, Encoding.UTF8.GetBytes(json.Serialize(head)));
 
                 if (bodyLen > 0 && bodyStream != null)
@@ -709,18 +770,21 @@ namespace LocalDiskServer
                         bool isExplorerLayout = string.Equals(rt.Info.Layout, "explorer", StringComparison.OrdinalIgnoreCase) ||
                             rt.Info.Id == "gradle" || rt.Info.Id == "maven" || rt.Info.Id == "npm" || rt.Info.Id == "pnpm";
 
+                        string rawContent = File.ReadAllText(rt.Info.IndexHtmlPath, Encoding.UTF8);
+                        string tokenizedContent = ReplaceTokensFallback(rt, rawContent);
+
                         if (isExplorerLayout)
                         {
                             html = HttpServer.GetHtmlHeader(rt.Info.Name, "/" + rt.Info.Id, "layout-explorer");
                             html += "<script>const currentView = '" + rt.Info.Id + "';</script>";
                             html += FileExplorer.RenderSidebar("/" + rt.Info.Id, I18nManager.CurrentLanguage);
-                            html += File.ReadAllText(rt.Info.IndexHtmlPath, Encoding.UTF8);
+                            html += tokenizedContent;
                             html += HttpServer.GetHtmlFooter();
                         }
                         else
                         {
                             html = HttpServer.GetHtmlHeader(rt.Info.Name, "");
-                            html += File.ReadAllText(rt.Info.IndexHtmlPath, Encoding.UTF8);
+                            html += tokenizedContent;
                             html += HttpServer.GetHtmlFooter();
                         }
                         WriteBytes(response, 200, "text/html; charset=utf-8", Encoding.UTF8.GetBytes(html));
@@ -731,6 +795,41 @@ namespace LocalDiskServer
                 ServeFailJson(response, 502, ex.Message);
             }
             return true;
+        }
+
+        private static string ReplaceTokensFallback(PluginRuntime rt, string rawHtml)
+        {
+            if (string.IsNullOrEmpty(rawHtml)) return rawHtml;
+            rawHtml = rawHtml.Replace("{NAV_HOME}", I18nManager.T("nav_home"));
+            rawHtml = rawHtml.Replace("{LOBBY_PROTO_TOGGLE_TITLE}", I18nManager.T("lobby_proto_toggle_title"));
+
+            try
+            {
+                string lang = I18nManager.CurrentLanguageCode;
+                string iniPath = Path.Combine(rt.Info.DirPath, Path.Combine("lang", lang + ".ini"));
+                if (!File.Exists(iniPath))
+                {
+                    iniPath = Path.Combine(rt.Info.DirPath, Path.Combine("lang", "zh-CN.ini"));
+                }
+                if (File.Exists(iniPath))
+                {
+                    string[] lines = File.ReadAllLines(iniPath, Encoding.UTF8);
+                    for (int i = 0; i < lines.Length; i++)
+                    {
+                        string tr = lines[i].Trim();
+                        if (tr.Length == 0 || tr.StartsWith("#") || tr.StartsWith(";")) continue;
+                        int eq = tr.IndexOf('=');
+                        if (eq > 0)
+                        {
+                            string k = tr.Substring(0, eq).Trim().ToUpperInvariant();
+                            string v = tr.Substring(eq + 1).Trim();
+                            rawHtml = rawHtml.Replace("{" + k + "}", v);
+                        }
+                    }
+                }
+            }
+            catch { }
+            return rawHtml;
         }
 
         public static bool HandleApi(string rawPath, System.Net.HttpListenerRequest request, System.Net.HttpListenerResponse response)
@@ -981,11 +1080,14 @@ namespace LocalDiskServer
                     if (!first) sb.Append(",");
                     first = false;
 
+                    string locName = p.GetLocalizedName();
+                    string locDesc = p.GetLocalizedDescription();
+
                     sb.Append("{");
                     sb.AppendFormat("\"id\":\"{0}\",", HttpServer.EscapeJson(p.Id));
-                    sb.AppendFormat("\"name\":\"{0}\",", HttpServer.EscapeJson(p.Name));
+                    sb.AppendFormat("\"name\":\"{0}\",", HttpServer.EscapeJson(locName));
                     sb.AppendFormat("\"version\":\"{0}\",", HttpServer.EscapeJson(p.Version));
-                    sb.AppendFormat("\"description\":\"{0}\",", HttpServer.EscapeJson(p.Description));
+                    sb.AppendFormat("\"description\":\"{0}\",", HttpServer.EscapeJson(locDesc));
                     sb.AppendFormat("\"icon\":\"{0}\",", HttpServer.EscapeJson(p.Icon));
                     sb.AppendFormat("\"order\":{0},", p.Order);
                     sb.AppendFormat("\"enabled\":{0},", enabled ? "true" : "false");
@@ -1014,9 +1116,9 @@ namespace LocalDiskServer
 
                     Dictionary<string, object> item = new Dictionary<string, object>();
                     item["id"] = p.Id;
-                    item["name"] = p.Name;
+                    item["name"] = p.GetLocalizedName();
                     item["version"] = p.Version;
-                    item["description"] = p.Description;
+                    item["description"] = p.GetLocalizedDescription();
                     item["icon"] = p.Icon;
                     item["order"] = p.Order;
                     item["enabled"] = enabled;
@@ -1147,8 +1249,9 @@ namespace LocalDiskServer
 
                 string link = "/plugin/" + p.Id;
                 string active = (activePath == link || activePath == p.Id) ? " active-node active" : "";
+                string locName = p.GetLocalizedName();
                 sb.AppendFormat("<div class='tree-node'><div class='tree-row{0}'><a href='{1}' class='tree-link-inline{0}' style='color:inherit;'>{2} {3}</a></div></div>",
-                    active, link, p.Icon, p.Name);
+                    active, link, p.Icon, locName);
             }
             return sb.ToString();
         }
@@ -1166,8 +1269,8 @@ namespace LocalDiskServer
 
                 string link = "/plugin/" + p.Id;
                 string icon = string.IsNullOrEmpty(p.Icon) ? "🧩" : p.Icon;
-                string title = string.IsNullOrEmpty(p.Name) ? p.Id : p.Name;
-                string desc = string.IsNullOrEmpty(p.Description) ? "" : p.Description;
+                string title = p.GetLocalizedName();
+                string desc = p.GetLocalizedDescription();
                 string ver = string.IsNullOrEmpty(p.Version) ? "1.0.0" : p.Version;
 
                 sb.AppendFormat(

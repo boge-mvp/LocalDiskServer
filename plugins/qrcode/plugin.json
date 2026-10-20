@@ -1,0 +1,11 @@
+{
+  "id": "qrcode",
+  "name": "二维码工具箱",
+  "version": "1.0.0",
+  "author": "LocalDiskServer",
+  "description": "纯离线高速二维码生成与图片逆向识别解析工具",
+  "icon": "🏁",
+  "category": "tools",
+  "order": 55,
+  "concurrency": 4
+}

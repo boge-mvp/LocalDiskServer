@@ -16,6 +16,7 @@ internal static class GradleBackend
     private const byte T_REQUEST_HEAD = 0x03;
     private const byte T_RESPONSE_HEAD = 0x04;
     private const byte T_BIN_CHUNK = 0x05;
+    private const byte T_EVENT = 0x06;
     private const int CHUNK = 64 * 1024;
 
     private static readonly JavaScriptSerializer json = new JavaScriptSerializer();
@@ -91,6 +92,27 @@ internal static class GradleBackend
                 {
                     HandleRequest(stdin, stdout, payload);
                 }
+                else if (type == T_EVENT)
+                {
+                    try
+                    {
+                        Dictionary<string, object> evt = json.DeserializeObject(Encoding.UTF8.GetString(payload)) as Dictionary<string, object>;
+                        if (evt != null && evt.ContainsKey("language") && evt["language"] != null)
+                        {
+                            string newLang = Convert.ToString(evt["language"]);
+                            if (!string.IsNullOrEmpty(newLang) && !string.Equals(newLang, currentLanguage, StringComparison.OrdinalIgnoreCase))
+                            {
+                                currentLanguage = newLang;
+                                LoadLanguage(currentLanguage);
+                                Log("Gradle 插件已切换语言至: " + currentLanguage);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log("处理 EVENT 异常: " + ex.Message);
+                    }
+                }
             }
         }
         catch (Exception ex)
@@ -104,29 +126,50 @@ internal static class GradleBackend
     {
         try
         {
-            string langFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "lang\\" + lang + ".ini");
-            if (!File.Exists(langFile))
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            string zhFile = Path.Combine(baseDir, "lang\\zh-CN.ini");
+            string targetFile = Path.Combine(baseDir, "lang\\" + lang + ".ini");
+
+            Dictionary<string, string> dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            if (File.Exists(zhFile))
             {
-                langFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "lang\\zh-CN.ini");
-            }
-            if (File.Exists(langFile))
-            {
-                string[] lines = File.ReadAllLines(langFile, Encoding.UTF8);
-                lock (i18nStrings)
+                foreach (string l in File.ReadAllLines(zhFile, Encoding.UTF8))
                 {
-                    i18nStrings.Clear();
-                    foreach (string l in lines)
+                    string t = l.Trim();
+                    if (string.IsNullOrEmpty(t) || t.StartsWith("#") || t.StartsWith(";")) continue;
+                    int eq = t.IndexOf('=');
+                    if (eq > 0)
                     {
-                        string t = l.Trim();
-                        if (string.IsNullOrEmpty(t) || t.StartsWith("#") || t.StartsWith(";")) continue;
-                        int eq = t.IndexOf('=');
-                        if (eq > 0)
-                        {
-                            string k = t.Substring(0, eq).Trim();
-                            string v = t.Substring(eq + 1).Trim();
-                            i18nStrings[k] = v.Replace("\\n", "\n").Replace("\\t", "\t");
-                        }
+                        string k = t.Substring(0, eq).Trim();
+                        string v = t.Substring(eq + 1).Trim();
+                        dict[k] = v.Replace("\\n", "\n").Replace("\\t", "\t");
                     }
+                }
+            }
+
+            if (!string.Equals(lang, "zh-CN", StringComparison.OrdinalIgnoreCase) && File.Exists(targetFile))
+            {
+                foreach (string l in File.ReadAllLines(targetFile, Encoding.UTF8))
+                {
+                    string t = l.Trim();
+                    if (string.IsNullOrEmpty(t) || t.StartsWith("#") || t.StartsWith(";")) continue;
+                    int eq = t.IndexOf('=');
+                    if (eq > 0)
+                    {
+                        string k = t.Substring(0, eq).Trim();
+                        string v = t.Substring(eq + 1).Trim();
+                        dict[k] = v.Replace("\\n", "\n").Replace("\\t", "\t");
+                    }
+                }
+            }
+
+            lock (i18nStrings)
+            {
+                i18nStrings.Clear();
+                foreach (KeyValuePair<string, string> kvp in dict)
+                {
+                    i18nStrings[kvp.Key] = kvp.Value;
                 }
             }
         }
@@ -774,6 +817,15 @@ internal static class GradleBackend
     private static void HandleRequest(Stream stdin, Stream stdout, byte[] payload)
     {
         Dictionary<string, object> head = json.DeserializeObject(Encoding.UTF8.GetString(payload)) as Dictionary<string, object>;
+        if (head.ContainsKey("language") && head["language"] != null)
+        {
+            string reqLang = Convert.ToString(head["language"]);
+            if (!string.IsNullOrEmpty(reqLang) && !string.Equals(reqLang, currentLanguage, StringComparison.OrdinalIgnoreCase))
+            {
+                currentLanguage = reqLang;
+                LoadLanguage(currentLanguage);
+            }
+        }
         int id = Convert.ToInt32(head["id"]);
         string method = Convert.ToString(head["method"]);
         string path = head.ContainsKey("path") ? Convert.ToString(head["path"]) : "";
@@ -1099,7 +1151,7 @@ internal static class GradleBackend
                     }
                     catch { }
 
-                    string resJson = string.Format("{{\"success\":true,\"version\":\"{0}\",\"absolutePath\":\"{1}\",\"hashFolder\":\"{2}\",\"zipFile\":\"{3}\",\"zipExists\":{4},\"unpackedFolder\":\"{5}\",\"subfolders\":{6},\"totalSize\":\"{7}\",\"totalFiles\":{8}}}",
+                    string resJson = string.Format("{{\"success\":true,\"version\":\"{0}\",\"path\":\"{1}\",\"absolutePath\":\"{1}\",\"hashFolder\":\"{2}\",\"zipFile\":\"{3}\",\"zipExists\":{4},\"unpackedFolder\":\"{5}\",\"subfolders\":{6},\"size\":\"{7}\",\"totalSize\":\"{7}\",\"fileCount\":{8},\"totalFiles\":{8}}}",
                         EscapeJson(ver), EscapeJson(verDir.Replace("\\", "\\\\")), EscapeJson(hashFolder), EscapeJson(zipFile), zipExists ? "true" : "false", EscapeJson(unpackedFolder), subfoldersJson.ToString(), FormatFileSize(totalBytes), fileCount);
                     respBody = Encoding.UTF8.GetBytes(resJson);
                 }

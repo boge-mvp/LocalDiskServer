@@ -575,12 +575,14 @@ namespace LocalDiskServer
                 language = langCode;
                 SaveConfigStatic();
                 UpdateMenuTexts();
+                PluginHost.BroadcastLanguage(langCode);
             }
         }
 
         private static void OnLanguageChanged()
         {
             UpdateMenuTexts();
+            PluginHost.BroadcastLanguage(I18nManager.CurrentLanguageCode);
         }
 
         public static void UpdateMenuTexts()

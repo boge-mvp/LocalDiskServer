@@ -1,0 +1,615 @@
+<!-- 引入纯离线二维码生成与解码库 -->
+<script src="/plugin/qrcode/assets/qrcode-bundle.js"></script>
+
+<div class='explorer-main' style='display: flex; flex-direction: column; height: 100%; min-width: 0;'>
+  <!-- 顶部精简导航栏 (高度 38px) -->
+  <div class='toolbar' style='flex-shrink: 0; padding: 4px 12px; height: 38px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color);'>
+    <div class='toolbar-left' style='display: flex; align-items: center; gap: 8px; min-width: 0;'>
+      <div class='address-bar-wrapper' style='min-height: 28px; padding: 0 4px;'>
+        <div class='breadcrumbs' style='font-size: 0.85rem;'>
+          <a href='/'>{NAV_HOME}</a> <span class='separator'>/</span> <span class='breadcrumb-current'>🏁 {QR_TITLE}</span>
+        </div>
+      </div>
+    </div>
+    
+    <div class='toolbar-right' style='display: flex; align-items: center; gap: 8px; flex-shrink: 0;'>
+      <button id='protocol-switch-btn' onclick='toggleProtocol(event)' class='btn-back' style='height: 28px; padding: 0 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.8rem; display: flex; align-items: center; gap: 4px; flex-shrink: 0;' title='{LOBBY_PROTO_TOGGLE_TITLE}'></button>
+    </div>
+  </div>
+
+  <!-- 功能主区域：左右分栏工作台 -->
+  <div class='explorer-scroll-area' style='flex: 1; display: flex; flex-direction: column; padding: 10px 14px; box-sizing: border-box; overflow: auto; min-height: 0;'>
+    <div class='qr-workspace'>
+      <!-- 左栏：二维码生成器 (QR Code Generator) -->
+      <div class='qr-card' id='qr-gen-card'>
+        <div class='qr-card-header'>
+          <div style='display: flex; align-items: center; gap: 6px;'>
+            <span style='font-size: 1.1rem;'>🏁</span>
+            <span class='qr-card-title'>{QR_GEN_TITLE}</span>
+          </div>
+          <div style='display: flex; align-items: center; gap: 8px;'>
+            <label style='font-size: 0.78rem; color: var(--text-muted); display: flex; align-items: center; gap: 4px;'>
+              {QR_ECC_LABEL}:
+              <select id='qr-ecc-select' class='qr-select' onchange='qrGenerate()'>
+                <option value='L'>L (7%)</option>
+                <option value='M' selected>M (15%)</option>
+                <option value='Q'>Q (25%)</option>
+                <option value='H'>H (30%)</option>
+              </select>
+            </label>
+            <button class='qr-btn qr-btn-primary' id='qr-btn-generate' onclick='qrGenerate()' title='{QR_BTN_GENERATE}'>⚡ {QR_BTN_GENERATE}</button>
+          </div>
+        </div>
+
+        <div class='qr-card-body'>
+          <textarea id='qr-gen-input' class='qr-editor' placeholder='{QR_INPUT_PLACEHOLDER}' spellcheck='false' oninput='qrOnInputChange()'></textarea>
+          
+          <div class='qr-preview-box'>
+            <div id='qr-canvas-holder' class='qr-canvas-holder'>
+              <canvas id='qr-canvas' width='220' height='220'></canvas>
+            </div>
+            <div id='qr-gen-empty' class='qr-empty-hint' style='display: none;'>
+              <span>💡 {QR_INPUT_PLACEHOLDER}</span>
+            </div>
+          </div>
+
+          <div class='qr-card-footer'>
+            <div style='display: flex; align-items: center; gap: 6px;'>
+              <span id='qr-gen-status' class='qr-status-badge' style='display: none;'></span>
+            </div>
+            <div style='display: flex; align-items: center; gap: 8px;'>
+              <button class='qr-btn' onclick='qrCopyImage()' id='qr-btn-copy-img' title='{QR_BTN_COPY_IMG}'>📋 {QR_BTN_COPY_IMG}</button>
+              <button class='qr-btn' onclick='qrDownloadImage()' id='qr-btn-dl-img' title='{QR_BTN_DOWNLOAD}'>💾 {QR_BTN_DOWNLOAD}</button>
+              <button class='qr-btn qr-btn-danger' onclick='qrClearGen()' title='{QR_BTN_CLEAR}'>{QR_BTN_CLEAR}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右栏：二维码识别与解析器 (QR Code Decoder) -->
+      <div class='qr-card' id='qr-decode-card'>
+        <div class='qr-card-header'>
+          <div style='display: flex; align-items: center; gap: 6px;'>
+            <span style='font-size: 1.1rem;'>🔍</span>
+            <span class='qr-card-title'>{QR_DECODE_TITLE}</span>
+          </div>
+          <span style='font-size: 0.74rem; color: var(--text-muted);'>{QR_DROPZONE_SUB}</span>
+        </div>
+
+        <div class='qr-card-body'>
+          <!-- 上传 / 拖拽 / 粘贴热区 -->
+          <div id='qr-dropzone' class='qr-dropzone' onclick='document.getElementById("qr-file-input").click()' ondragover='qrOnDragOver(event)' ondragleave='qrOnDragLeave(event)' ondrop='qrOnDrop(event)'>
+            <input type='file' id='qr-file-input' accept='image/*' style='display: none;' onchange='qrOnFileSelect(event)'>
+            <div style='font-size: 2rem; margin-bottom: 6px;'>📷</div>
+            <div style='font-size: 0.85rem; font-weight: 600; color: var(--text-color);'>{QR_DROPZONE_HINT}</div>
+            <div style='font-size: 0.74rem; color: var(--text-muted); margin-top: 4px;'>{QR_DROPZONE_SUB}</div>
+          </div>
+
+          <!-- 解析结果区域 -->
+          <div style='display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 6px;'>
+            <div style='display: flex; align-items: center; justify-content: space-between;'>
+              <span style='font-size: 0.8rem; font-weight: 600; color: var(--text-color);'>{QR_RESULT_LBL}</span>
+              <span id='qr-decode-status' class='qr-status-badge' style='display: none;'></span>
+            </div>
+            <textarea id='qr-decode-result' class='qr-editor' style='flex: 1;' readonly placeholder='{QR_RESULT_PLACEHOLDER}' spellcheck='false'></textarea>
+          </div>
+
+          <div class='qr-card-footer'>
+            <div style='display: flex; align-items: center; gap: 6px;'>
+              <span id='qr-result-meta' style='font-size: 0.74rem; color: var(--text-muted);'>0 字符</span>
+            </div>
+            <div style='display: flex; align-items: center; gap: 8px;'>
+              <button class='qr-btn qr-btn-primary' onclick='qrCopyResult()' id='qr-btn-copy-res' title='{QR_BTN_COPY_TEXT}'>📋 {QR_BTN_COPY_TEXT}</button>
+              <button class='qr-btn' onclick='qrOpenInBrowser()' id='qr-btn-open-res' style='display: none;' title='{QR_BTN_OPEN_URL}'>↗ {QR_BTN_OPEN_URL}</button>
+              <button class='qr-btn qr-btn-danger' onclick='qrClearDecode()' title='{QR_BTN_CLEAR}'>{QR_BTN_CLEAR}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+/* ── 二维码工作台布局规范 (双卡片人机工程学响应式) ── */
+.qr-workspace {
+  display: flex;
+  flex-direction: row;
+  gap: 14px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+}
+@media (max-width: 820px) {
+  .qr-workspace {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .qr-card {
+    min-height: 480px;
+  }
+}
+
+.qr-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--container-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.qr-card-header {
+  height: 38px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-color);
+  background: rgba(0,0,0,0.02);
+  flex-shrink: 0;
+}
+.qr-card-title {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.qr-card-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.qr-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding-top: 4px;
+}
+
+/* ── 文本与代码编辑器容器 ── */
+.qr-editor {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  background: var(--bg-color);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.qr-editor:focus {
+  border-color: var(--accent-hover);
+  box-shadow: 0 0 0 2px rgba(41, 128, 185, 0.2);
+}
+
+#qr-gen-input {
+  height: 110px;
+  flex-shrink: 0;
+}
+
+/* ── 二维码独立展示底盘 (高对比防黑夜融色) ── */
+.qr-preview-box {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.02);
+  border: 1px dashed var(--border-color);
+  border-radius: 6px;
+  padding: 12px;
+  min-height: 220px;
+  position: relative;
+}
+.qr-canvas-holder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  background: #ffffff !important;
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+  border: 1px solid rgba(0,0,0,0.06);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.qr-canvas-holder:hover {
+  transform: scale(1.02);
+}
+#qr-canvas {
+  display: block;
+}
+
+.qr-empty-hint {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+/* ── 拖拽上传与粘贴热区 ── */
+.qr-dropzone {
+  border: 2px dashed var(--border-color);
+  border-radius: 8px;
+  padding: 18px 12px;
+  text-align: center;
+  background: rgba(0,0,0,0.015);
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+}
+.qr-dropzone:hover, .qr-dropzone.dragover {
+  border-color: var(--accent-hover);
+  background: rgba(41, 128, 185, 0.06);
+}
+
+/* ── 紧凑人机工程学按钮与选择器 ── */
+.qr-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--container-bg);
+  color: var(--text-color);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  transition: all 0.15s;
+  outline: none;
+}
+.qr-btn:hover {
+  border-color: var(--accent-hover);
+  color: var(--accent-hover);
+}
+.qr-btn:active {
+  transform: scale(0.97);
+}
+.qr-btn-primary {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: #ffffff;
+}
+.qr-btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: #ffffff;
+}
+.qr-btn-danger {
+  color: #e74c3c;
+}
+.qr-btn-danger:hover {
+  border-color: #e74c3c;
+  background: rgba(231, 76, 60, 0.08);
+}
+
+.qr-select {
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--container-bg);
+  color: var(--text-color);
+  font-size: 0.76rem;
+  outline: none;
+  cursor: pointer;
+}
+
+.qr-status-badge {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  animation: qrFadeIn 0.2s ease-out;
+}
+.qr-status-success {
+  background: rgba(46, 160, 67, 0.15);
+  color: #2ea043;
+}
+.qr-status-error {
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+}
+
+@keyframes qrFadeIn {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+</style>
+
+<script>
+(function() {
+  var genDebounceTimer = null;
+
+  // ── 二维码生成 ──
+  window.qrGenerate = function() {
+    var inEl = document.getElementById('qr-gen-input');
+    var canvas = document.getElementById('qr-canvas');
+    var holder = document.getElementById('qr-canvas-holder');
+    var emptyHint = document.getElementById('qr-gen-empty');
+    var eccSelect = document.getElementById('qr-ecc-select');
+
+    if (!inEl || !canvas) return;
+    var text = inEl.value;
+    if (!text || text.trim() === '') {
+      if (holder) holder.style.display = 'none';
+      if (emptyHint) emptyHint.style.display = 'block';
+      return;
+    }
+
+    if (emptyHint) emptyHint.style.display = 'none';
+    if (holder) holder.style.display = 'flex';
+
+    var ecc = eccSelect ? eccSelect.value : 'M';
+    try {
+      if (window.QRApp && typeof window.QRApp.generateToCanvas === 'function') {
+        window.QRApp.generateToCanvas(canvas, text, {
+          ecc: ecc,
+          cellSize: 5,
+          margin: 3
+        });
+      } else {
+        console.warn('QRApp not ready, retrying...');
+      }
+    } catch (e) {
+      console.error('QR Generate Error:', e);
+      showGenStatus('❌ 生成失败: ' + e.message, false);
+    }
+  };
+
+  window.qrOnInputChange = function() {
+    if (genDebounceTimer) clearTimeout(genDebounceTimer);
+    genDebounceTimer = setTimeout(function() {
+      qrGenerate();
+    }, 200);
+  };
+
+  window.qrDownloadImage = function() {
+    var canvas = document.getElementById('qr-canvas');
+    if (!canvas) return;
+    try {
+      var url = canvas.toDataURL('image/png');
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'qrcode_' + Date.now() + '.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showGenStatus('✓ 下载已触发', true);
+    } catch (e) {
+      showGenStatus('❌ 下载失败: ' + e.message, false);
+    }
+  };
+
+  window.qrCopyImage = function() {
+    var canvas = document.getElementById('qr-canvas');
+    if (!canvas) return;
+    try {
+      if (canvas.toBlob && navigator.clipboard && navigator.clipboard.write) {
+        canvas.toBlob(function(blob) {
+          if (!blob) {
+            showGenStatus('❌ 复制失败', false);
+            return;
+          }
+          var item = new ClipboardItem({ 'image/png': blob });
+          navigator.clipboard.write([item]).then(function() {
+            showGenStatus('✓ 二维码图片已复制到剪贴板', true);
+          }).catch(function(err) {
+            showGenStatus('❌ 复制异常: ' + err.message, false);
+          });
+        }, 'image/png');
+      } else {
+        showGenStatus('⚠ 浏览器不支持直接复制图片', false);
+      }
+    } catch (e) {
+      showGenStatus('❌ 复制失败: ' + e.message, false);
+    }
+  };
+
+  window.qrClearGen = function() {
+    var inEl = document.getElementById('qr-gen-input');
+    if (inEl) inEl.value = '';
+    qrGenerate();
+    showGenStatus('', true);
+  };
+
+  function showGenStatus(msg, isSuccess) {
+    var st = document.getElementById('qr-gen-status');
+    if (!st) return;
+    if (!msg) {
+      st.style.display = 'none';
+      return;
+    }
+    st.textContent = msg;
+    st.className = 'qr-status-badge ' + (isSuccess ? 'qr-status-success' : 'qr-status-error');
+    st.style.display = 'inline-block';
+    setTimeout(function() {
+      if (st) st.style.display = 'none';
+    }, 2500);
+  }
+
+  // ── 二维码解码与识别 ──
+  window.qrDecodeImageFile = function(fileOrBlob) {
+    if (!fileOrBlob || !fileOrBlob.type.startsWith('image/')) {
+      showDecodeStatus('❌ 请传入有效的图片文件', false);
+      return;
+    }
+
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var img = new Image();
+      img.onload = function() {
+        var tempCanvas = document.createElement('canvas');
+        tempCanvas.width = img.naturalWidth || img.width;
+        tempCanvas.height = img.naturalHeight || img.height;
+        var ctx = tempCanvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+
+        try {
+          if (window.QRApp && typeof window.QRApp.decodeFromCanvas === 'function') {
+            var res = window.QRApp.decodeFromCanvas(tempCanvas);
+            if (res && res.data) {
+              setDecodeResult(res.data);
+              showDecodeStatus('✓ 识别成功', true);
+            } else {
+              showDecodeStatus('❌ 未识别到有效二维码', false);
+            }
+          }
+        } catch (err) {
+          showDecodeStatus('❌ 识别异常: ' + err.message, false);
+        }
+      };
+      img.onerror = function() {
+        showDecodeStatus('❌ 图片加载失败', false);
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(fileOrBlob);
+  };
+
+  function setDecodeResult(text) {
+    var resEl = document.getElementById('qr-decode-result');
+    var metaEl = document.getElementById('qr-result-meta');
+    var openBtn = document.getElementById('qr-btn-open-res');
+
+    if (resEl) resEl.value = text;
+    if (metaEl) metaEl.textContent = text.length + ' 字符';
+
+    if (openBtn) {
+      var isUrl = /^(https?:\/\/|www\.)[^\s]+$/i.test(text.trim());
+      openBtn.style.display = isUrl ? 'inline-flex' : 'none';
+    }
+  }
+
+  window.qrCopyResult = function() {
+    var resEl = document.getElementById('qr-decode-result');
+    if (!resEl || !resEl.value) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(resEl.value).then(function() {
+        showDecodeStatus('✓ 文本已复制到剪贴板', true);
+      }).catch(function() {
+        resEl.select();
+        document.execCommand('copy');
+        showDecodeStatus('✓ 文本已复制', true);
+      });
+    } else {
+      resEl.select();
+      document.execCommand('copy');
+      showDecodeStatus('✓ 文本已复制', true);
+    }
+  };
+
+  window.qrOpenInBrowser = function() {
+    var resEl = document.getElementById('qr-decode-result');
+    if (!resEl) return;
+    var url = resEl.value.trim();
+    if (/^www\./i.test(url)) url = 'https://' + url;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  window.qrClearDecode = function() {
+    setDecodeResult('');
+    showDecodeStatus('', true);
+  };
+
+  function showDecodeStatus(msg, isSuccess) {
+    var st = document.getElementById('qr-decode-status');
+    if (!st) return;
+    if (!msg) {
+      st.style.display = 'none';
+      return;
+    }
+    st.textContent = msg;
+    st.className = 'qr-status-badge ' + (isSuccess ? 'qr-status-success' : 'qr-status-error');
+    st.style.display = 'inline-block';
+    setTimeout(function() {
+      if (st) st.style.display = 'none';
+    }, 2800);
+  }
+
+  // ── 拖拽与粘贴事件 ──
+  window.qrOnDragOver = function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    var dz = document.getElementById('qr-dropzone');
+    if (dz) dz.classList.add('dragover');
+  };
+
+  window.qrOnDragLeave = function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    var dz = document.getElementById('qr-dropzone');
+    if (dz) dz.classList.remove('dragover');
+  };
+
+  window.qrOnDrop = function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    var dz = document.getElementById('qr-dropzone');
+    if (dz) dz.classList.remove('dragover');
+    var dt = e.dataTransfer;
+    if (dt && dt.files && dt.files.length > 0) {
+      qrDecodeImageFile(dt.files[0]);
+    }
+  };
+
+  window.qrOnFileSelect = function(e) {
+    var files = e.target.files;
+    if (files && files.length > 0) {
+      qrDecodeImageFile(files[0]);
+    }
+    e.target.value = '';
+  };
+
+  function handlePasteEvent(e) {
+    var items = (e.clipboardData || e.originalEvent.clipboardData).items;
+    if (!items) return;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        var blob = items[i].getAsFile();
+        if (blob) {
+          qrDecodeImageFile(blob);
+          e.preventDefault();
+          break;
+        }
+      }
+    }
+  }
+
+  // ── 初始化二维码工作区 ──
+  window.initQrView = function() {
+    window.removeEventListener('paste', handlePasteEvent);
+    window.addEventListener('paste', handlePasteEvent);
+
+    // 默认生成一个示例二维码
+    var inEl = document.getElementById('qr-gen-input');
+    if (inEl && (!inEl.value || inEl.value.trim() === '')) {
+      inEl.value = 'http://localhost:1234';
+      qrGenerate();
+    }
+  };
+
+  // 挂接 SPA 局部渲染生命周期
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initQrView);
+  } else {
+    initQrView();
+  }
+})();
+</script>

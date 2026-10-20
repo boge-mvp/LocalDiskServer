@@ -635,6 +635,29 @@ namespace LocalDiskServer
 
         // Action menu handlers
     
+        public static string RenderViewMenuDropdown()
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<div class='view-dropdown' id='view-dropdown'>");
+            sb.AppendFormat("  <button type='button' class='btn-view-dropdown' id='btn-view-dropdown' onclick='toggleViewMenu(event)' title='{0}'>", I18nManager.T("toolbar_view_btn"));
+            sb.Append("    <svg class='icon-view-hamburger' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='3' y1='6' x2='21' y2='6'></line><line x1='3' y1='12' x2='21' y2='12'></line><line x1='3' y1='18' x2='21' y2='18'></line></svg>");
+            sb.AppendFormat("    <span class='btn-view-text'>{0}</span>", I18nManager.T("toolbar_view_btn"));
+            sb.Append("    <svg class='icon-arrow-down' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg>");
+            sb.Append("  </button>");
+            sb.Append("  <div class='view-menu' id='view-menu'>");
+            sb.AppendFormat("    <div class='view-menu-item' data-view='xlarge' onclick='selectViewMode(\"xlarge\")'><span class='menu-item-icon'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='3' width='20' height='14' rx='2'></rect><line x1='8' y1='21' x2='16' y2='21'></line><line x1='12' y1='17' x2='12' y2='21'></line></svg></span><span class='menu-item-label'>{0}</span><span class='menu-item-check'>✓</span></div>", I18nManager.T("view_extra_large"));
+            sb.AppendFormat("    <div class='view-menu-item' data-view='large' onclick='selectViewMode(\"large\")'><span class='menu-item-icon'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='4' width='18' height='15' rx='2'></rect><line x1='3' y1='15' x2='21' y2='15'></line></svg></span><span class='menu-item-label'>{0}</span><span class='menu-item-check'>✓</span></div>", I18nManager.T("view_large"));
+            sb.AppendFormat("    <div class='view-menu-item' data-view='medium' onclick='selectViewMode(\"medium\")'><span class='menu-item-icon'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='5' y='5' width='14' height='11' rx='1.5'></rect><line x1='8' y1='19' x2='16' y2='19'></line><line x1='12' y1='16' x2='12' y2='19'></line></svg></span><span class='menu-item-label'>{0}</span><span class='menu-item-check'>✓</span></div>", I18nManager.T("view_medium"));
+            sb.AppendFormat("    <div class='view-menu-item' data-view='small' onclick='selectViewMode(\"small\")'><span class='menu-item-icon'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='7' height='7' rx='1.5'></rect><rect x='14' y='3' width='7' height='7' rx='1.5'></rect><rect x='3' y='14' width='7' height='7' rx='1.5'></rect><rect x='14' y='14' width='7' height='7' rx='1.5'></rect></svg></span><span class='menu-item-label'>{0}</span><span class='menu-item-check'>✓</span></div>", I18nManager.T("view_small"));
+            sb.AppendFormat("    <div class='view-menu-item' data-view='list' onclick='selectViewMode(\"list\")'><span class='menu-item-icon'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><line x1='4' y1='6' x2='20' y2='6'></line><line x1='4' y1='10' x2='20' y2='10'></line><line x1='4' y1='14' x2='20' y2='14'></line><line x1='4' y1='18' x2='20' y2='18'></line></svg></span><span class='menu-item-label'>{0}</span><span class='menu-item-check'>✓</span></div>", I18nManager.T("view_list"));
+            sb.AppendFormat("    <div class='view-menu-item' data-view='details' onclick='selectViewMode(\"details\")'><span class='menu-item-icon'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><line x1='3' y1='5' x2='21' y2='5'></line><line x1='3' y1='9' x2='21' y2='9'></line><line x1='3' y1='13' x2='21' y2='13'></line><line x1='3' y1='17' x2='21' y2='17'></line><line x1='3' y1='21' x2='21' y2='21'></line></svg></span><span class='menu-item-label'>{0}</span><span class='menu-item-check'>✓</span></div>", I18nManager.T("view_details"));
+            sb.AppendFormat("    <div class='view-menu-item' data-view='tiles' onclick='selectViewMode(\"tiles\")'><span class='menu-item-icon'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='5' width='18' height='5' rx='1.5'></rect><rect x='3' y='14' width='18' height='5' rx='1.5'></rect></svg></span><span class='menu-item-label'>{0}</span><span class='menu-item-check'>✓</span></div>", I18nManager.T("view_tiles"));
+            sb.AppendFormat("    <div class='view-menu-item' data-view='content' onclick='selectViewMode(\"content\")'><span class='menu-item-icon'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><circle cx='5' cy='7' r='1.5'></circle><line x1='10' y1='7' x2='20' y2='7'></line><circle cx='5' cy='17' r='1.5'></circle><line x1='10' y1='17' x2='20' y2='17'></line></svg></span><span class='menu-item-label'>{0}</span><span class='menu-item-check'>✓</span></div>", I18nManager.T("view_content"));
+            sb.Append("  </div>");
+            sb.Append("</div>");
+            return sb.ToString();
+        }
+
         public static void ServeDriveList(HttpListenerResponse response)
         {
             StringBuilder sb = new StringBuilder();
@@ -654,11 +677,7 @@ namespace LocalDiskServer
             sb.Append("  <div class='toolbar-right' style='display: flex; align-items: center; gap: 8px;'>");
             sb.AppendFormat("    <button class='btn-toolbar-settings' onclick='showSettingsModal()' style='height: 32px; padding: 0 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px;' title='{0}'><span>⚙️</span> <span>{0}</span></button>", I18nManager.T("lobby_settings_btn"));
             sb.AppendFormat("    <button class='btn-toolbar-logs' onclick='showLogs()' style='height: 32px; padding: 0 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--container-bg); color: var(--text-color); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px;' title='{0}'><span>📝</span> <span>{0}</span></button>", I18nManager.T("lobby_logs_btn"));
-            sb.Append("    <select id='view-select' onchange='setViewMode(this.value)' style='height: 32px; background: var(--container-bg); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 8px; cursor: pointer; outline: none; font-size: 0.85rem;'>");
-            sb.AppendFormat("      <option value='details'>{0}</option>", I18nManager.T("lobby_view_details"));
-            sb.AppendFormat("      <option value='large'>{0}</option>", I18nManager.T("lobby_view_large"));
-            sb.AppendFormat("      <option value='medium'>{0}</option>", I18nManager.T("lobby_view_medium"));
-            sb.Append("    </select>");
+            sb.Append(HttpServer.RenderViewMenuDropdown());
             sb.AppendFormat("    <input type='text' id='search' placeholder='{0}' oninput='filterCards()'>", I18nManager.T("lobby_search_placeholder"));
             sb.Append("  </div>");
             sb.Append("</div>");
@@ -718,20 +737,9 @@ namespace LocalDiskServer
             }
             sb.Append("</div>");
 
-            // Section 2: Installed Plugins
-            string pluginsLobbyHtml = PluginHost.GetLobbyCardsHtml();
-            if (!string.IsNullOrEmpty(pluginsLobbyHtml))
-            {
-                sb.Append("<hr style='border: 0; border-top: 1px solid var(--border-color); margin: 16px 0;'>");
-                sb.AppendFormat("<h2>🧩 {0}</h2>", I18nManager.T("nav_plugins"));
-                sb.Append("<div class='grid'>");
-                sb.Append(pluginsLobbyHtml);
-                sb.Append("</div>");
-            }
+            sb.Append("<hr style='border: 0; border-top: 1px solid var(--border-color); margin: 8px 0;'>");
 
-            sb.Append("<hr style='border: 0; border-top: 1px solid var(--border-color); margin: 16px 0;'>");
-
-            // Section 3: Physical Drives
+            // Section 2: Physical Drives
             sb.AppendFormat("<h2>💾 {0}</h2>", I18nManager.T("lobby_drives_title"));
             sb.Append("<div class='grid'>");
 
@@ -759,6 +767,17 @@ namespace LocalDiskServer
                 }
             }
             sb.Append("</div>");
+
+            // Section 3: Installed Plugins
+            string pluginsLobbyHtml = PluginHost.GetLobbyCardsHtml();
+            if (!string.IsNullOrEmpty(pluginsLobbyHtml))
+            {
+                sb.Append("<hr style='border: 0; border-top: 1px solid var(--border-color); margin: 8px 0;'>");
+                sb.AppendFormat("<h2>🧩 {0}</h2>", I18nManager.T("nav_plugins"));
+                sb.Append("<div class='grid'>");
+                sb.Append(pluginsLobbyHtml);
+                sb.Append("</div>");
+            }
 
             sb.AppendFormat(
                 "<div class='lobby-footer'>" +
