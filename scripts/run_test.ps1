@@ -3,7 +3,9 @@
 
 param(
     [int]$testPort = 18080,
-    [int]$testHttpsPort = 18443
+    [int]$testHttpsPort = 18443,
+    [Alias("v")]
+    [string]$Version
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,9 +19,13 @@ Write-Host "   LocalDiskServer 项目内自动化测试       " -ForegroundColor
 Write-Host "==========================================" -ForegroundColor Cyan
 
 # 1. 确保最新可执行程序已编译
-if (-not (Test-Path $distExe)) {
-    Write-Host "[1/4] 未检测到构建产物，正在触发编译..." -ForegroundColor Yellow
-    & $buildScript
+if ($Version -or (-not (Test-Path $distExe))) {
+    Write-Host "[1/4] 调用 build.ps1 编译产物..." -ForegroundColor Yellow
+    if ($Version) {
+        & $buildScript -Version $Version
+    } else {
+        & $buildScript
+    }
 } else {
     Write-Host "[1/4] 检测到构建产物: $distExe" -ForegroundColor Green
 }

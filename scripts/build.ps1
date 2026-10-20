@@ -1,6 +1,11 @@
 # LocalDiskServer 自动化构建脚本 (PowerShell)
 # 功能：自动查找 csc.exe 编译器，将 src/ 源代码与 resources/ 前端静态资产编译为独立的 dist/LocalDiskServer.exe
 
+param(
+    [Alias("v")]
+    [string]$Version
+)
+
 $ErrorActionPreference = "Stop"
 
 $rootDir = Split-Path -Parent $PSScriptRoot
@@ -8,10 +13,62 @@ $srcDir = Join-Path $rootDir "src"
 $resDir = Join-Path $rootDir "resources"
 $distDir = Join-Path $rootDir "dist"
 $outputExe = Join-Path $distDir "LocalDiskServer.exe"
+$programCs = Join-Path $srcDir "Program.cs"
 
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "   LocalDiskServer 自动化构建过程启动     " -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
+
+# 0. 动态解析版本号 (优先级: 显式参数 > APP_VERSION环境变量 > GIT_TAG环境变量 > 本地Git Tag > Program.cs现有版本)
+$resolvedVersion = $null
+$versionSource = "default"
+
+if ($Version -and $Version.Trim() -ne "") {
+    $resolvedVersion = $Version.Trim() -replace '^v',''
+    $versionSource = "CLI param (-Version)"
+} elseif ($env:APP_VERSION -and $env:APP_VERSION.Trim() -ne "") {
+    $resolvedVersion = $env:APP_VERSION.Trim() -replace '^v',''
+    $versionSource = "Environment variable (APP_VERSION)"
+} elseif ($env:GIT_TAG -and $env:GIT_TAG.Trim() -ne "") {
+    $resolvedVersion = $env:GIT_TAG.Trim() -replace '^v',''
+    $versionSource = "Environment variable (GIT_TAG)"
+} else {
+    try {
+        $gitTag = git describe --tags --abbrev=0 2>$null
+        if ($gitTag -and $gitTag.Trim() -ne "") {
+            $resolvedVersion = $gitTag.Trim() -replace '^v',''
+            $versionSource = "Git Tag ($gitTag)"
+        }
+    } catch {
+        # ignore git failure
+    }
+}
+
+if (-not $resolvedVersion) {
+    if (Test-Path $programCs) {
+        $srcContent = Get-Content $programCs -Raw
+        if ($srcContent -match 'public const string APP_VERSION = "([^"]+)";') {
+            $resolvedVersion = $matches[1]
+            $versionSource = "Fallback (src/Program.cs)"
+        }
+    }
+    if (-not $resolvedVersion) {
+        $resolvedVersion = "1.0.0"
+        $versionSource = "Default fallback"
+    }
+}
+
+# 动态注入版本号至 src/Program.cs (保持与 GitHub Actions release.yml 一致的注入规则)
+if (Test-Path $programCs) {
+    $srcContent = [System.IO.File]::ReadAllText($programCs, [System.Text.Encoding]::UTF8)
+    $newSrcContent = $srcContent -replace '(APP_VERSION = ")[\d.]+(")', "`${1}$resolvedVersion`${2}"
+    if ($newSrcContent -ne $srcContent) {
+        [System.IO.File]::WriteAllText($programCs, $newSrcContent, [System.Text.Encoding]::UTF8)
+        Write-Host "[0/4] 动态注入版本号: $resolvedVersion (来源: $versionSource)" -ForegroundColor Green
+    } else {
+        Write-Host "[0/4] 版本号已对齐: $resolvedVersion (来源: $versionSource)" -ForegroundColor Green
+    }
+}
 
 # 1. 查找 csc.exe 编译器
 $cscCandidates = @(
@@ -98,12 +155,20 @@ Write-Host "[4/4] 正在执行编译打包..." -ForegroundColor Yellow
 $process = Start-Process -FilePath $cscPath -ArgumentList $compilerArgs -NoNewWindow -Wait -PassThru
 
 if ($process.ExitCode -eq 0 -and (Test-Path $outputExe)) {
-    $exeSize = (Get-Item $outputExe).Length / 1KB
+    $item = Get-Item $outputExe
+    $exeSize = $item.Length / 1KB
+    $actualVersion = $item.VersionInfo.FileVersion
     Write-Host "==========================================" -ForegroundColor Green
     Write-Host " [√] 编译构建成功！" -ForegroundColor Green
     Write-Host " 输出目标: $outputExe" -ForegroundColor White
+    Write-Host " 产物版本: $actualVersion" -ForegroundColor White
     Write-Host " 文件大小: $([Math]::Round($exeSize, 2)) KB" -ForegroundColor White
     Write-Host "==========================================" -ForegroundColor Green
+
+    if ($actualVersion -ne $resolvedVersion) {
+        Write-Error "版本校验失败: 预期版本为 $resolvedVersion，但生成 exe 实际报告为 $actualVersion。"
+        exit 1
+    }
 } else {
     Write-Host "==========================================" -ForegroundColor Red
     Write-Host " [×] 编译构建失败，退出代码: $($process.ExitCode)" -ForegroundColor Red

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Net;
 using System.Threading;
@@ -73,7 +73,7 @@ namespace LocalDiskServer
     {
         public static readonly List<ShellInfo> availableShells = new List<ShellInfo>();
         
-        public const string APP_VERSION = "1.1.0";
+        public const string APP_VERSION = "1.0.3";
 
         public static NotifyIcon trayIcon;
         public static MenuItem versionMenuItem;

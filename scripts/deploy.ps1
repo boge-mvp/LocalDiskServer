@@ -1,6 +1,11 @@
 # LocalDiskServer 自动化部署脚本 (PowerShell)
 # 功能：确保生成最新 LocalDiskServer.exe，安全关闭运行中的实例，发布覆盖至便携目录并自动重启服务
 
+param(
+    [Alias("v")]
+    [string]$Version
+)
+
 $ErrorActionPreference = "Stop"
 
 $rootDir = Split-Path -Parent $PSScriptRoot
@@ -16,10 +21,14 @@ Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "   LocalDiskServer 部署与无缝重启流程      " -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 
-# 1. 检查是否已编译，若无则自动触发编译
-if (-not (Test-Path $distExe)) {
-    Write-Host "[1/5] 未检测到构建产物，自动调用 build.ps1 编译..." -ForegroundColor Yellow
-    & $buildScript
+# 1. 检查是否需要重新编译（指定版本或无产物时自动调用 build.ps1 编译）
+if ($Version -or (-not (Test-Path $distExe))) {
+    Write-Host "[1/5] 调用 build.ps1 编译产物..." -ForegroundColor Yellow
+    if ($Version) {
+        & $buildScript -Version $Version
+    } else {
+        & $buildScript
+    }
     if ($LASTEXITCODE -ne 0 -and -not (Test-Path $distExe)) {
         Write-Error "错误：自动化编译失败，终止部署！"
         exit 1

@@ -6,10 +6,10 @@ Windows 托盘应用：纯 C# (.NET Framework 4.x) 单文件 exe，将本地磁�
 ## 常用命令
 
 ```powershell
-./scripts/build.ps1      # 编译 dist/LocalDiskServer.exe（构建前自动终止 dist 下运行中的实例）
-./scripts/run_test.ps1   # 唯一测试入口：--test 模式起 18080/18443 隔离实例，断言 HTTP 200 后自动清理
-./scripts/deploy.ps1     # 本机部署：覆盖 D:\apps\portable-apps\LocalDiskServer 并重启（机器专用路径）
-./scripts/run_repair.ps1 # 需管理员：重建根 CA 证书并重绑 HTTP.sys SSL 端口
+./scripts/build.ps1                 # 自动探测 Git 标签动态注入版本并编译 dist/LocalDiskServer.exe（可带 -Version "x.y.z"）
+./scripts/run_test.ps1              # 唯一测试入口：--test 模式起 18080/18443 隔离实例，断言 HTTP 200 后自动清理
+./scripts/deploy.ps1                # 本机部署：覆盖 D:\apps\portable-apps\LocalDiskServer 并重启（可带 -Version "x.y.z"）
+./scripts/run_repair.ps1            # 需管理员：重建根 CA 证书并重绑 HTTP.sys SSL 端口
 ```
 
 改动验证闭环：`build.ps1` → `run_test.ps1`（后者在无产物时会自动触发编译）。
